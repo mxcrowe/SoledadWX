@@ -1,18 +1,18 @@
-# CumulusAI Quick Start Guide
+# SoledadWX Quick Start Guide
 
-Get up and running with CumulusAI development in 5 minutes.
+Get up and running with SoledadWX development in 5 minutes.
 
 ## 1. Activate Virtual Environment
 
 ```bash
 # Windows Command Prompt
-cumulusai_env\Scripts\activate
+soledadwx_env\Scripts\activate
 
 # Windows PowerShell
-.\cumulusai_env\Scripts\Activate.ps1
+.\soledadwx_env\Scripts\Activate.ps1
 
 # Git Bash / Linux
-source cumulusai_env/Scripts/activate
+source soledadwx_env/Scripts/activate
 ```
 
 ## 2. Install Dependencies
@@ -33,7 +33,7 @@ python -c "import PyQt6; import PyQtGraph; print('✓ Dependencies OK')"
 python main.py
 ```
 
-You should see the CumulusAI main window with "Coming Soon!" placeholder.
+You should see the SoledadWX main window with "Coming Soon!" placeholder.
 
 ## 5. Run with Claude Code
 
@@ -46,7 +46,7 @@ Then ask Claude: "Implement Phase 2: Database Layer Implementation"
 ## File Structure Quick Reference
 
 ```
-cumulusai/
+soledadwx/
 ├── config/         → Settings, calibration, constants
 ├── data/           → Database, models, importers, API client
 ├── gui/            → Main window, dialogs, graphs, widgets
@@ -58,7 +58,7 @@ cumulusai/
 
 Start with Phase 2:
 
-1. **Read**: `CumulusAI_Implementation_Plan.md` Phase 2 section
+1. **Read**: `SoledadWX_Implementation_Plan.md` Phase 2 section
 2. **Ask Claude**: "Create database.py with SQLite schema and CRUD operations"
 3. **Ask Claude**: "Create models.py with dataclasses for all weather data"
 4. **Test**: Run the database tests to verify
@@ -75,7 +75,7 @@ Before using the API client:
 
 ```bash
 # Activate environment
-cumulusai_env\Scripts\activate
+soledadwx_env\Scripts\activate
 
 # Run tests
 python -m pytest
@@ -95,7 +95,7 @@ git log --oneline
 
 ## Key Files
 
-- **`CumulusAI_Implementation_Plan.md`** - Full project specification
+- **`SoledadWX_Implementation_Plan.md`** - Full project specification
 - **`CLAUDE_CODE_GUIDE.md`** - Using Claude Code with CCV3
 - **`README.md`** - Comprehensive project documentation
 - **`main.py`** - Application entry point
@@ -107,7 +107,7 @@ git log --oneline
 
 ```bash
 # Activate venv and reinstall
-cumulusai_env\Scripts\activate
+soledadwx_env\Scripts\activate
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
@@ -144,7 +144,7 @@ print(drivers)  # Should show at least one driver
 
 ## Resources
 
-- Implementation Plan: `CumulusAI_Implementation_Plan.md`
+- Implementation Plan: `SoledadWX_Implementation_Plan.md`
 - Claude Code Guide: `CLAUDE_CODE_GUIDE.md`
 - Full README: `README.md`
 - PyQt6: https://doc.qt.io/qt-6/
@@ -166,7 +166,7 @@ print(drivers)  # Should show at least one driver
 ## Next Command
 
 ```bash
-cumulusai_env\Scripts\activate
+soledadwx_env\Scripts\activate
 claude-code
 
 # Then ask Claude:

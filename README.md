@@ -1,311 +1,74 @@
-# CumulusAI - Desktop Weather Station Application
+# SoledadWX
 
-A comprehensive desktop weather station application inspired by Cumulus, providing real-time data display, historical data management, and advanced weather analysis.
+A desktop weather station application for Mount Soledad, La Jolla.
 
-## 🔨 Project Status
+Two modes in one app: a photorealistic skeuomorphic dashboard for ambient viewing ("Bermuda Fish Tank"), and a data-dense analytical interface for diving into 17 years of hyper-local history ("Analyst"). Capstoned by hyper-local AI forecasting trained on that archive.
 
-**⚠️ Under Active Development - Phase 0 (Data Archaeology)**
-
-This is a greenfield project currently in the design and data analysis phase. The architecture is being discovered through intentional co-development with Claude Code and CCV3.
-
-**Not ready for production use.** Expect significant changes to structure and APIs as we progress through phases.
-
-For development notes, architecture decisions, and CCV3 learnings, see [CLAUDE_CODE_GUIDE.md](CLAUDE_CODE_GUIDE.md) and [.claude/handoffs/cumulusai-session-1.md](.claude/handoffs/cumulusai-session-1.md).
-
-## Overview
-
-CumulusAI unifies weather data from multiple sources:
-- **AmbientWeather.net API** - Real-time data from WS-1002-WiFi weather station
-- **HP2000.mdb Database** - Historical data from EasyWeatherIP
-- **Cumulus Legacy Data** - 8+ years of historical weather data (April 2010 - January 2018)
-
-## Features
-
-### Current Implementation Status
-- [x] Project structure and setup
-- [x] Virtual environment configuration
-- [ ] Database layer (SQLite)
-- [ ] Data importers (Cumulus, MDB, API)
-- [ ] Dashboard GUI with real-time updates
-- [ ] Scrollable interactive graphs
-- [ ] Records and extremes display
-- [ ] NOAA report generation
-- [ ] Data export functionality
-
-## System Requirements
-
-- **OS**: Windows 11 (64-bit or 32-bit)
-- **Python**: 3.11 or later
-- **RAM**: 4GB minimum
-- **Disk Space**: 500MB for application and data
-
-## Quick Start
-
-### 1. Create Virtual Environment
-
-```bash
-# Navigate to project directory
-cd G:\Dev\CumulusAI
-
-# Create virtual environment
-python -m venv cumulusai_env
-
-# Activate environment (Windows Command Prompt)
-cumulusai_env\Scripts\activate
-
-# Or if using Git Bash/PowerShell
-source cumulusai_env/Scripts/activate
-```
-
-### 2. Install Dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-### 3. Run Application
-
-```bash
-python main.py
-```
-
-## Project Structure
-
-```
-CumulusAI/
-├── cumulusai/                   # Main application package
-│   ├── config/                  # Configuration and settings
-│   │   ├── settings.py         # Application settings management
-│   │   ├── calibration.py      # Sensor calibration
-│   │   └── constants.py        # Application constants
-│   ├── data/                    # Data layer
-│   │   ├── database.py         # SQLite operations
-│   │   ├── models.py           # Data model classes
-│   │   ├── calculations.py     # Derived value calculations
-│   │   ├── validators.py       # Data validation
-│   │   ├── api_client.py       # AmbientWeather API client
-│   │   └── importers/          # Data import modules
-│   │       ├── base_importer.py
-│   │       ├── cumulus_importer.py
-│   │       ├── mdb_importer.py
-│   │       └── api_importer.py
-│   ├── gui/                     # User interface
-│   │   ├── main_window.py      # Main application window
-│   │   ├── dialogs/            # Dialog windows
-│   │   ├── graphs/             # Graph widgets
-│   │   ├── widgets/            # Custom widgets
-│   │   └── resources/          # Icons and stylesheets
-│   ├── export/                  # Export functionality
-│   │   ├── csv_export.py
-│   │   └── noaa_reports.py
-│   └── utils/                   # Utilities
-│       ├── logger.py
-│       ├── alarms.py
-│       └── backup.py
-├── main.py                      # Application entry point
-├── requirements.txt             # Python dependencies
-├── README.md                    # This file
-└── .gitignore                  # Git ignore rules
-```
-
-## Configuration
-
-### API Setup
-
-**AmbientWeather.net Configuration:**
-
-1. Obtain your API Key from `CumulusAI_Implementation_Plan.md`
-2. Generate an Application Key at https://ambientweather.net/account
-3. Configure in the application settings
-
-### Database
-
-The application uses SQLite for data storage. The database is automatically created on first run with the schema defined in `CumulusAI_Implementation_Plan.md`.
-
-## Development Phases
-
-### Phase 1: Project Setup (Complete)
-- Project structure created
-- Virtual environment configured
-- Dependencies installed
-- Basic application entry point ready
-
-### Phase 2: Database Layer (Next)
-- SQLite database schema implementation
-- CRUD operations for all tables
-- Database connection management
-- Backup/restore functionality
-
-### Phase 3: Data Import Engine
-- Cumulus historical data importer
-- HP2000.mdb database importer
-- AmbientWeather API client
-- Data conflict resolution
-
-### Phase 4-9: GUI, Features, and Polish
-See `CumulusAI_Implementation_Plan.md` for detailed phase breakdown
-
-## Minimal Viable Product (MVP)
-
-The MVP will include:
-1. Real-time data display from AmbientWeather API
-2. Basic dashboard with current conditions
-3. 24-hour scrolling temperature graph
-4. Today's extremes display
-5. Basic settings dialog
-
-**Estimated MVP completion**: 4 weeks
-
-## Installation from Source
-
-### Prerequisites
-- Git (for version control)
-- Python 3.11+ (https://www.python.org/downloads/)
-- pip (included with Python)
-
-### Setup Steps
-
-```bash
-# Clone or download the repository
-cd G:\Dev\CumulusAI
-
-# Create and activate virtual environment
-python -m venv cumulusai_env
-cumulusai_env\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Run the application
-python main.py
-```
-
-## Building Windows Installer
-
-When ready for distribution:
-
-```bash
-pip install pyinstaller
-pyinstaller --windowed --onefile --icon=cumulusai/gui/resources/icons/icon.ico main.py
-```
-
-This creates a standalone executable in the `dist/` folder.
-
-## Data Sources
-
-### Source 1: Cumulus Historical Data
-- **Location**: `G:\Dev\CumulusAI\Legacy\Cumulus-Historical-Data`
-- **Date Range**: April 2010 - January 2018
-- **Files**: Monthly logs and daily summaries
-- **Status**: Legacy, high-priority data source
-
-### Source 2: HP2000.mdb Database
-- **Location**: `C:\Users\Public\HP2000\HP2000.mdb`
-- **Date Range**: ~2018-present
-- **Status**: Current, medium-priority data source
-
-### Source 3: AmbientWeather.net API
-- **Type**: WebSocket (real-time) + REST API (historical)
-- **Status**: Active, highest-priority data source
-
-## Station Configuration
-
-**Current Weather Station**: Ambient Weather WS-1002-WiFi
-- **Location**: 32.8191666666667° N, -117.240555555556° W
-- **Altitude**: 522 feet (159 meters)
-- **Units**: °F, inHg, inches, mph
-- **Log Interval**: 3 minutes (with API, real-time available)
-
-**Original Station**: Zephyr PWS-1000TD (Model 4)
-- **Historical Data**: April 2010 - January 2018
-- **Location**: Same as above
-- **Data Logger**: Enabled
-
-## Known Issues and Considerations
-
-1. **MDB File Access**: Requires Microsoft Access ODBC driver (included on Windows)
-2. **Date Format Handling**: Supports both dd/mm/yy and dd-mm-yy formats
-3. **Data Gaps**: Import tools include gap detection and reporting
-4. **Large Datasets**: Database indexes optimize queries for 100K+ readings
-
-## Documentation
-
-- **Implementation Plan**: `CumulusAI_Implementation_Plan.md`
-- **Field Reference**: See Appendix A in implementation plan
-- **API Configuration**: See Appendix B in implementation plan
-- **Calibration Data**: See Appendix C in implementation plan
-
-## Technology Stack
-
-### Core Framework
-- **PyQt6** (6.6.0) - Modern Windows 11 compatible GUI
-- **PyQtGraph** (0.13.3) - Fast, interactive plotting
-
-### Data Processing
-- **numpy** - Array operations
-- **python-dateutil** - Date/time handling
-- **pyodbc** - Access .mdb databases
-
-### Networking
-- **python-socketio** - WebSocket connectivity for real-time API
-
-### Database
-- **SQLite3** - Lightweight, serverless database (stdlib)
-
-### Distribution
-- **PyInstaller** - Create Windows executable
-
-## Development Workflow
-
-### Daily Development Cycle
-
-1. **Review** the current phase requirements
-2. **Implement** the required modules
-3. **Test** components individually
-4. **Integrate** into main application
-5. **Commit** with descriptive message
-
-### Code Style
-
-- Type hints throughout
-- PEP 8 naming conventions
-- Try/except error handling
-- Logging at info/warning/error levels
-- Dataclasses for data models
-
-## Resources
-
-### Cumulus Documentation
-- https://cumuluswiki.org/a/About_Cumulus
-- https://github.com/cumulusmx/CumulusMX
-- https://www.wxforum.net/
-
-### Weather Station Resources
-- https://ambientweather.com/
-- https://www.weewx.com/
-- https://www.weather-display.com/
-
-### PyQt6 Documentation
-- https://doc.qt.io/qt-6/
-- https://pypi.org/project/PyQt6/
-
-## License
-
-To be determined
-
-## Contributing
-
-Development is currently focused on MVP completion. See `CumulusAI_Implementation_Plan.md` for phase breakdown and task assignments.
-
-## Support
-
-For issues or questions:
-1. Check `CumulusAI_Implementation_Plan.md` for technical details
-2. Review existing GitHub issues (when repository is created)
-3. Contact the development team
+The full vision, technology choices, and data architecture are in **[ARCHITECTURE.md](ARCHITECTURE.md)** — start there.
 
 ---
 
-**Last Updated**: January 11, 2025
-**Current Phase**: Phase 1 - Project Setup (Complete)
-**Next Phase**: Phase 2 - Database Layer Implementation
+## Status — May 2026
+
+**Phase 0 — Data archaeology** *(active)*
+
+The live-data pipeline works end-to-end (Rust WebSocket → React UI), but no persistence layer or visual design has been built yet. Current focus is cataloging every source of historical weather data and rescuing at-risk data before it ages out of providers' rolling windows.
+
+| Component | Status |
+|---|---|
+| Live AmbientWeather WebSocket (Rust) | ✅ Working |
+| Telemetry firehose UI (React) | ✅ Working (placeholder, not the final design) |
+| AmbientWeather REST historical rescue | ✅ Complete (267 pages, ~76,548 records, Aug 2025 → May 2026) |
+| HP2000-history.mdb (2020–2025) | ✅ Verified readable via ODBC |
+| Cumulus historical logs (2009–2018) | ✅ Confirmed solid via Cumulus app; file-level inventory pending |
+| KSAN METAR gap-fill (2018–2020) | ⏳ Planned via NOAA/NCEI |
+| WS-1002 SD card | ⏳ Not yet pulled |
+| SQLite schema | ⏳ Pending Phase 0 completion |
+| Photorealistic gauge UI | ⏳ Phase 1 |
+| Historical importers | ⏳ Phase 3 |
+| Analyst UI | ⏳ Phase 4 |
+| AI forecasting | ⏳ Phase 5 |
+
+---
+
+## Stack
+
+- **Frontend:** Tauri + React (TypeScript)
+- **Backend:** Rust
+- **Storage:** SQLite (planned)
+- **AI/ML:** Python sidecar (Phase 5+)
+
+See [ARCHITECTURE.md §2](ARCHITECTURE.md#2-technology-stack) for rationale.
+
+---
+
+## Running the app
+
+Prerequisites: Node.js 20+, Rust toolchain, Tauri prerequisites for Windows ([tauri.app](https://tauri.app/start/prerequisites/)).
+
+```powershell
+cd soledadwx-ui
+npm install
+npm run tauri dev
+```
+
+The app expects `soledadwx-ui/src-tauri/.env` with:
+
+```
+AMBIENT_API_KEY=...
+AMBIENT_APP_KEY=...
+```
+
+Get keys at [ambientweather.net/account](https://ambientweather.net/account).
+
+---
+
+## Repository layout
+
+See [ARCHITECTURE.md §6](ARCHITECTURE.md#6-repository-layout).
+
+---
+
+## License
+
+To be determined.

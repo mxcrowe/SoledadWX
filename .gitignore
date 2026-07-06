@@ -1,5 +1,5 @@
 # Virtual Environment
-cumulusai_env/
+soledadwx_env/
 venv/
 env/
 .venv
@@ -44,7 +44,7 @@ htmlcov/
 *.db
 *.sqlite
 *.sqlite3
-cumulusai.db
+soledadwx.db
 logs/
 
 # Backup files
@@ -61,3 +61,7 @@ Thumbs.db
 *.accdb
 Legacy/
 HP2000*/
+
+# Environment Variables
+.env
+.env.*

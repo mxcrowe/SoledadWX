@@ -28,7 +28,7 @@ As we build Phase 2, do you want to use this as a test of the continuity/handoff
 Should we document "lessons learned about CCV3 in real development" as we go?
 Are there specific CCV3 skills you're curious about testing? (TLDR for the Cumulus file parsing, /tdd for database tests, etc.)
 
-**Just as CumulusAI is a new project, so is CCV3 to me.  I have some good documentation and notes to learn how to better leverage what parcadei has built, and I know much of it will be triggered by hooks and take place somewhat automatically, but I do want to better understand what the many skills and agents bring to the table and I want to use CCV3 deliberately, as much as possible.  Documenting as we go will be a big part of our work, not just on CumulusAI, but regarding what we discover with CCV3.**
+**Just as SoledadWX is a new project, so is CCV3 to me.  I have some good documentation and notes to learn how to better leverage what parcadei has built, and I know much of it will be triggered by hooks and take place somewhat automatically, but I do want to better understand what the many skills and agents bring to the table and I want to use CCV3 deliberately, as much as possible.  Documenting as we go will be a big part of our work, not just on SoledadWX, but regarding what we discover with CCV3.**
 
 The "8+ years of historical data" is a lot to parse and validate. Do you want to tackle that before MVP, or get real-time display working first and circle back to historical import?
 For the LLM integration, are you thinking this goes into the MVP, or is it Phase 8+ territory?

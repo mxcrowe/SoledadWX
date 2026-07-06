@@ -5,7 +5,14 @@
       "Bash(echo:*)",
       "Bash(git init:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(gh --version:*)",
+      "Bash(git remote *)",
+      "Bash(git fetch *)",
+      "Bash(powershell -Command \"\\(Get-Item 'G:\\\\Dev\\\\SoledadWX\\\\More Context.json'\\).Length\")"
     ]
+  },
+  "enabledPlugins": {
+    "claude-code-setup@claude-plugins-official": true
   }
 }

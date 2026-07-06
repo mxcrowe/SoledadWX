@@ -1,5 +1,5 @@
 ================================================================================
-CumulusAI Project - Initial Setup Complete
+SoledadWX Project - Initial Setup Complete
 ================================================================================
 
 Date: January 11, 2025
@@ -46,16 +46,16 @@ GETTING STARTED
 ================================================================================
 
 STEP 1: Create Virtual Environment (if not done)
-  cd G:\Dev\CumulusAI
-  python -m venv cumulusai_env
+  cd G:\Dev\SoledadWX
+  python -m venv soledadwx_env
 
 STEP 2: Activate Virtual Environment
   Windows Command Prompt:
-    cumulusai_env\Scripts\activate
+    soledadwx_env\Scripts\activate
   Windows PowerShell:
-    .\cumulusai_env\Scripts\Activate.ps1
+    .\soledadwx_env\Scripts\Activate.ps1
   Git Bash:
-    source cumulusai_env/Scripts/activate
+    source soledadwx_env/Scripts/activate
 
 STEP 3: Install Dependencies
   pip install -r requirements.txt
@@ -73,8 +73,8 @@ STEP 6: Start Claude Code Development (Optional)
 PROJECT STRUCTURE AT A GLANCE
 ================================================================================
 
-G:\Dev\CumulusAI\
-├── cumulusai/                  Main application package
+G:\Dev\SoledadWX\
+├── soledadwx/                  Main application package
 │   ├── config/                 Settings and calibration
 │   ├── data/                   Database and importers
 │   ├── gui/                    User interface components
@@ -86,7 +86,7 @@ G:\Dev\CumulusAI\
 ├── README.md                   Full documentation
 ├── QUICKSTART.md              5-minute quick start
 ├── CLAUDE_CODE_GUIDE.md       Using Claude Code with CCV3
-├── CumulusAI_Implementation_Plan.md   Complete specification
+├── SoledadWX_Implementation_Plan.md   Complete specification
 └── Legacy/                     Historical data (Cumulus, EasyWeatherIP)
 
 ================================================================================
@@ -108,7 +108,7 @@ EXAMPLE PROMPTS FOR NEXT PHASE:
   - "Create the data models in models.py with dataclasses"
   - "Implement the cumulus_importer.py for parsing historical data"
 
-BENEFITS FOR CUMULUSAI:
+BENEFITS FOR SOLEDADWX:
   ✓ Maintains context of full 9-phase project plan
   ✓ Understands dependencies between phases
   ✓ Consistent with naming conventions and architecture decisions
@@ -171,7 +171,7 @@ KEY RESOURCES
 ================================================================================
 
 Main Documentation Files:
-  1. CumulusAI_Implementation_Plan.md
+  1. SoledadWX_Implementation_Plan.md
      - Complete technical specification
      - Database schema
      - Field references for all data sources
@@ -218,14 +218,14 @@ IMPORTANT NOTES
    - Configure in Phase 7 (Settings)
 
 3. DATA SOURCES
-   - Cumulus data: G:\Dev\CumulusAI\Legacy\Cumulus-Historical-Data\
+   - Cumulus data: G:\Dev\SoledadWX\Legacy\Cumulus-Historical-Data\
    - HP2000.mdb: C:\Users\Public\HP2000\HP2000.mdb
    - API credentials: Will be configured in Phase 7
 
 4. DATABASE
    - SQLite (file-based, no server needed)
    - Created automatically on first run
-   - Location: cumulusai.db (in project root when implemented)
+   - Location: soledadwx.db (in project root when implemented)
 
 5. WINDOWS INSTALLER
    - Will be created in Phase 24 using PyInstaller
@@ -274,9 +274,9 @@ COMMAND REFERENCE
 ================================================================================
 
 Virtual Environment:
-  Activate (CMD):       cumulusai_env\Scripts\activate
-  Activate (PS):        .\cumulusai_env\Scripts\Activate.ps1
-  Activate (Bash):      source cumulusai_env/Scripts/activate
+  Activate (CMD):       soledadwx_env\Scripts\activate
+  Activate (PS):        .\soledadwx_env\Scripts\Activate.ps1
+  Activate (Bash):      source soledadwx_env/Scripts/activate
   Deactivate:           deactivate
 
 Development:
@@ -321,9 +321,9 @@ Common Issues:
 PROJECT INFORMATION
 ================================================================================
 
-Project Name: CumulusAI
+Project Name: SoledadWX
 Description: Desktop Weather Station Application (Cumulus-inspired)
-Location: G:\Dev\CumulusAI
+Location: G:\Dev\SoledadWX
 Platform: Windows 11
 Language: Python 3.11+
 Framework: PyQt6 (GUI) + PyQtGraph (Graphs)
@@ -349,11 +349,11 @@ Project setup is complete and ready for development!
 
 Your next step: Activate the virtual environment and start Phase 2.
 
-  1. cumulusai_env\Scripts\activate
+  1. soledadwx_env\Scripts\activate
   2. pip install -r requirements.txt
   3. python main.py (verify it works)
   4. claude-code (start development)
 
-Good luck with CumulusAI! 🚀
+Good luck with SoledadWX! 🚀
 
 ================================================================================

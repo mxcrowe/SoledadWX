@@ -1,0 +1,92 @@
+.logo.vite:hover {
+  filter: drop-shadow(0 0 2em #747bff);
+}
+
+.logo.react:hover {
+  filter: drop-shadow(0 0 2em #61dafb);
+}
+:root {
+  font-family: Consolas, monospace;
+  font-size: 14px;
+  background-color: #121212;
+  color: #00ff00;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  display: flex;
+  place-items: center;
+  min-height: 100vh;
+}
+
+.container {
+  margin: 0 auto;
+  padding: 2rem;
+  max-width: 1000px;
+  width: 100%;
+}
+
+h1 {
+  font-size: 2rem;
+  margin-bottom: 0;
+  color: #00ff00;
+  border-bottom: 1px solid #333;
+  padding-bottom: 0.5rem;
+}
+
+p {
+  color: #888;
+  margin-top: 0.5rem;
+  margin-bottom: 2rem;
+}
+
+.telemetry-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background-color: #333; /* Acts as border color between boxes */
+  border: 1px solid #333;
+}
+
+.data-box {
+  background-color: #1a1a1a;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.data-box.span-full {
+  grid-column: 1 / -1;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.label {
+  font-size: 0.8rem;
+  color: #888;
+  text-transform: uppercase;
+  margin-bottom: 0.3rem;
+}
+
+.val {
+  font-size: 1.5rem;
+  font-weight: bold;
+  color: #00ff00;
+}
+
+.span-full .label {
+  margin-bottom: 0;
+}
+
+.span-full .val {
+  font-size: 1rem;
+}
+
+.loading {
+  font-style: italic;
+  color: #666;
+}
+

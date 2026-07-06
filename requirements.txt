@@ -1,6 +1,0 @@
-PyQt6==6.6.0
-PyQtGraph==0.13.3
-pyodbc==4.0.39
-python-socketio[asyncio]==5.10.0
-numpy==1.24.3
-python-dateutil==2.8.2
