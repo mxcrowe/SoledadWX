@@ -9,7 +9,7 @@
   font-family: Consolas, monospace;
   font-size: 14px;
   background-color: #121212;
-  color: #00ff00;
+  color: #eae8e2;
 }
 
 body {
@@ -30,7 +30,7 @@ body {
 h1 {
   font-size: 2rem;
   margin-bottom: 0;
-  color: #00ff00;
+  color: #eae8e2;
   border-bottom: 1px solid #333;
   padding-bottom: 0.5rem;
 }
@@ -74,7 +74,7 @@ p {
 .val {
   font-size: 1.5rem;
   font-weight: bold;
-  color: #00ff00;
+  color: #eae8e2;
 }
 
 .span-full .label {
