@@ -28,6 +28,21 @@ fn range_stats(metric: String, start: String, end: String) -> Result<db::RangeSt
     db::range_stats(&metric, &start, &end)
 }
 
+#[tauri::command]
+fn console_stats() -> Result<db::ConsoleStats, String> {
+    db::console_stats().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn wind_rose(hours: i64) -> Result<db::WindRose, String> {
+    db::wind_rose(hours).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn series_hours(metric: String, hours: i64) -> Result<Vec<db::SeriesPoint>, String> {
+    db::series_hours(&metric, hours)
+}
+
 async fn run_websocket(app_handle: AppHandle, recorder: &mut Option<db::Recorder>) {
     dotenvy::dotenv().ok();
     let api_key = env::var("AMBIENT_API_KEY").expect("AMBIENT_API_KEY must be set");
@@ -149,7 +164,9 @@ pub fn run() {
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet, db_status, query_series, range_stats])
+        .invoke_handler(tauri::generate_handler![
+            greet, db_status, query_series, range_stats, console_stats, wind_rose, series_hours
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

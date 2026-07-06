@@ -330,3 +330,211 @@ pub fn range_stats(metric: &str, start: &str, end: &str) -> Result<RangeStats, S
         wind_run_mi: if metric == "windspeedmph" { wind_run } else { None },
     })
 }
+
+// ---------- Console page queries ----------
+
+#[derive(serde::Serialize, Default)]
+pub struct Extreme {
+    pub value: Option<f64>,
+    pub ts: Option<i64>,
+}
+
+#[derive(serde::Serialize, Default)]
+pub struct DayExtremes {
+    pub high_wind: Extreme,
+    pub high_gust: Extreme,
+    pub min_temp: Extreme,
+    pub max_temp: Extreme,
+    pub min_press: Extreme,
+    pub max_press: Extreme,
+    pub max_rain_rate: Extreme,
+}
+
+#[derive(serde::Serialize)]
+pub struct ConsoleStats {
+    pub temp_trend_f_hr: Option<f64>,
+    pub press_trend_in_hr: Option<f64>,
+    pub avg_temp_today: Option<f64>,
+    pub wind_run_today_mi: Option<f64>,
+    pub rain_yesterday_in: Option<f64>,
+    pub rain_month_in: Option<f64>,
+    pub rain_year_in: Option<f64>,
+    pub today: DayExtremes,
+    pub yesterday: DayExtremes,
+}
+
+fn local_midnight_epoch(days_back: i64) -> i64 {
+    (chrono::Local::now().date_naive() - chrono::Duration::days(days_back))
+        .and_hms_opt(0, 0, 0)
+        .unwrap()
+        .and_local_timezone(chrono::Local)
+        .unwrap()
+        .timestamp()
+}
+
+fn extreme(conn: &Connection, metric: &str, a: i64, b: i64, want_max: bool) -> Extreme {
+    let order = if want_max { "DESC" } else { "ASC" };
+    conn.query_row(
+        &format!(
+            "SELECT o.value, o.ts_utc FROM observations o
+             WHERE o.metric_id=(SELECT id FROM metrics WHERE name=?1)
+               AND o.ts_utc >= ?2 AND o.ts_utc < ?3
+             ORDER BY o.value {order}, o.ts_utc ASC LIMIT 1"
+        ),
+        rusqlite::params![metric, a, b],
+        |r| Ok(Extreme { value: r.get(0)?, ts: r.get(1)? }),
+    )
+    .unwrap_or_default()
+}
+
+fn day_extremes(conn: &Connection, a: i64, b: i64) -> DayExtremes {
+    DayExtremes {
+        high_wind: extreme(conn, "windspeedmph", a, b, true),
+        high_gust: extreme(conn, "windgustmph", a, b, true),
+        min_temp: extreme(conn, "tempf", a, b, false),
+        max_temp: extreme(conn, "tempf", a, b, true),
+        min_press: extreme(conn, "baromrelin", a, b, false),
+        max_press: extreme(conn, "baromrelin", a, b, true),
+        max_rain_rate: extreme(conn, "rainratein", a, b, true),
+    }
+}
+
+/// Trend per hour: avg of the last 15 min minus avg of minutes 60-75 ago.
+fn trend_per_hour(conn: &Connection, metric: &str, now: i64) -> Option<f64> {
+    let avg = |a: i64, b: i64| -> Option<f64> {
+        conn.query_row(
+            "SELECT AVG(value) FROM observations
+             WHERE metric_id=(SELECT id FROM metrics WHERE name=?1)
+               AND ts_utc >= ?2 AND ts_utc < ?3",
+            rusqlite::params![metric, a, b],
+            |r| r.get(0),
+        )
+        .ok()
+        .flatten()
+    };
+    let recent = avg(now - 900, now)?;
+    let old = avg(now - 4500, now - 3600)?;
+    Some(recent - old)
+}
+
+pub fn console_stats() -> Result<ConsoleStats, rusqlite::Error> {
+    let conn = Connection::open(db_path())?;
+    let now = chrono::Utc::now().timestamp();
+    let mid0 = local_midnight_epoch(0);
+    let mid1 = local_midnight_epoch(1);
+
+    let scalar = |q: &str, a: i64, b: i64| -> Option<f64> {
+        conn.query_row(q, rusqlite::params![a, b], |r| r.get(0)).ok().flatten()
+    };
+    let avg_temp_today = scalar(
+        "SELECT AVG(value) FROM observations
+         WHERE metric_id=(SELECT id FROM metrics WHERE name='tempf')
+           AND ts_utc >= ?1 AND ts_utc < ?2",
+        mid0, now,
+    );
+    // Wind run today: mean speed x elapsed hours since local midnight.
+    let wind_run_today_mi = scalar(
+        "SELECT AVG(value) FROM observations
+         WHERE metric_id=(SELECT id FROM metrics WHERE name='windspeedmph')
+           AND ts_utc >= ?1 AND ts_utc < ?2",
+        mid0, now,
+    )
+    .map(|v| v * ((now - mid0) as f64 / 3600.0));
+    let rain_yesterday_in = scalar(
+        "SELECT MAX(value) FROM observations
+         WHERE metric_id=(SELECT id FROM metrics WHERE name='dailyrainin')
+           AND ts_utc >= ?1 AND ts_utc < ?2",
+        mid1, mid0,
+    );
+    let latest = |metric: &str| -> Option<f64> {
+        conn.query_row(
+            "SELECT value FROM observations
+             WHERE metric_id=(SELECT id FROM metrics WHERE name=?1)
+             ORDER BY ts_utc DESC LIMIT 1",
+            [metric],
+            |r| r.get(0),
+        )
+        .ok()
+    };
+
+    Ok(ConsoleStats {
+        temp_trend_f_hr: trend_per_hour(&conn, "tempf", now),
+        press_trend_in_hr: trend_per_hour(&conn, "baromrelin", now),
+        avg_temp_today,
+        wind_run_today_mi,
+        rain_yesterday_in,
+        rain_month_in: latest("monthlyrainin"),
+        rain_year_in: latest("yearlyrainin"),
+        today: day_extremes(&conn, mid0, now),
+        yesterday: day_extremes(&conn, mid1, mid0),
+    })
+}
+
+#[derive(serde::Serialize)]
+pub struct WindRose {
+    /// counts[sector][bin]: 16 compass sectors (N=0, clockwise), speed bins
+    /// [0-2, 2-5, 5-10, 10-15, 15-20, 20+] mph.
+    pub counts: Vec<Vec<u32>>,
+    pub total: u32,
+    pub calm: u32,
+    pub hours: i64,
+}
+
+pub fn wind_rose(hours: i64) -> Result<WindRose, rusqlite::Error> {
+    let conn = Connection::open(db_path())?;
+    let since = chrono::Utc::now().timestamp() - hours * 3600;
+    let mut counts = vec![vec![0u32; 6]; 16];
+    let (mut total, mut calm) = (0u32, 0u32);
+    let mut stmt = conn.prepare(
+        "SELECT d.value, s.value FROM observations d
+         JOIN observations s ON s.ts_utc = d.ts_utc
+           AND s.metric_id = (SELECT id FROM metrics WHERE name='windspeedmph')
+         WHERE d.metric_id = (SELECT id FROM metrics WHERE name='winddir')
+           AND d.ts_utc >= ?1",
+    )?;
+    let rows = stmt.query_map([since], |r| Ok((r.get::<_, f64>(0)?, r.get::<_, f64>(1)?)))?;
+    for row in rows {
+        let (dir, speed) = row?;
+        total += 1;
+        if speed < 0.5 {
+            calm += 1;
+            continue;
+        }
+        let sector = ((dir / 22.5).round() as usize) % 16;
+        let bin = match speed {
+            s if s < 2.0 => 0,
+            s if s < 5.0 => 1,
+            s if s < 10.0 => 2,
+            s if s < 15.0 => 3,
+            s if s < 20.0 => 4,
+            _ => 5,
+        };
+        counts[sector][bin] += 1;
+    }
+    Ok(WindRose { counts, total, calm, hours })
+}
+
+/// Hourly series over the last N hours, straight from observations
+/// (bounded scan; used for the dashboard chart thumbnails).
+pub fn series_hours(metric: &str, hours: i64) -> Result<Vec<SeriesPoint>, String> {
+    let conn = Connection::open(db_path()).map_err(|e| e.to_string())?;
+    let since = chrono::Utc::now().timestamp() - hours * 3600;
+    let mut stmt = conn
+        .prepare(
+            "SELECT (ts_utc / 3600) * 3600 AS h, AVG(value), MIN(value), MAX(value), COUNT(*)
+             FROM observations
+             WHERE metric_id = (SELECT id FROM metrics WHERE name = ?1) AND ts_utc >= ?2
+             GROUP BY h ORDER BY h",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(rusqlite::params![metric, since], |r| {
+            Ok(SeriesPoint {
+                t: r.get(0)?, avg: r.get(1)?, min: r.get(2)?, max: r.get(3)?, n: r.get(4)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(rows)
+}

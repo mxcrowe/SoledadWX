@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
+import Console from "./Console";
 import "./App.css";
 
-interface WeatherReading {
+export interface WeatherReading {
   dateutc: number;
   date?: string;
   tempf?: number;
@@ -179,7 +180,7 @@ function Analyst() {
 function App() {
   const [reading, setReading] = useState<WeatherReading | null>(null);
   const [status, setStatus] = useState<DbStatus | null>(null);
-  const [view, setView] = useState<"live" | "analyst">("live");
+  const [view, setView] = useState<"console" | "live" | "analyst">("console");
 
   useEffect(() => {
     const unlisten = listen<WeatherReading>("weather-reading", (event) => {
@@ -207,12 +208,15 @@ function App() {
     <main className="container">
       <h1>SoledadWX</h1>
       <div className="tabs">
+        <button className={view === "console" ? "tab active" : "tab"}
+                onClick={() => setView("console")}>Console</button>
         <button className={view === "live" ? "tab active" : "tab"}
                 onClick={() => setView("live")}>Live</button>
         <button className={view === "analyst" ? "tab active" : "tab"}
                 onClick={() => setView("analyst")}>Analyst</button>
       </div>
 
+      {view === "console" && <Console reading={reading} />}
       {view === "analyst" && <Analyst />}
 
       {view === "live" && status && (
