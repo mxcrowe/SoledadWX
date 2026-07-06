@@ -25,8 +25,8 @@ The archive holds **11.7M observations spanning Sep 2009 → present**, assemble
 | SQLite archive (11.7M observations, 2009→present) | ✅ Built + validated — see `data/DATA_REPORT.md` |
 | Historical importers (Cumulus, MDB, Ambient) | ✅ Complete, idempotent, unit-verified |
 | Canonical resolver + resampler | ✅ Working (`scripts/wxquery.py`) |
-| KSAN METAR gap-fill (1,596 missing days, mostly 2018–2022) | ⏳ Planned via NOAA/NCEI |
-| WS-1002 SD card | ⏳ Not yet pulled — now essential (MDB era has big internal holes) |
+| Gap-fill (1,596 missing days, mostly 2018–2022) | ⏳ MSDSD mesonet (0.5 km away) for temp/wind via Synoptic API; rain/pressure fallback TBD |
+| WS-1002 SD card | ❌ Dead end — card checked, no data |
 | Photorealistic gauge UI | ⏳ Phase 1 |
 | Historical importers | ⏳ Phase 3 |
 | Analyst UI | ⏳ Phase 4 |

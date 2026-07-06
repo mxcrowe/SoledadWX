@@ -107,3 +107,35 @@ p {
 .rec-on { color: #2ecc71; }
 .rec-off { color: #e74c3c; }
 .extremes { opacity: 0.85; }
+
+.tabs { display: flex; gap: 0.5rem; justify-content: center; margin: 0.25rem 0 1rem; }
+.tab {
+  padding: 0.4rem 1.4rem; border-radius: 8px; border: 1px solid rgba(128,128,128,0.35);
+  background: transparent; cursor: pointer; font-size: 1rem;
+}
+.tab.active { background: rgba(100, 148, 237, 0.25); border-color: cornflowerblue; }
+
+.analyst { max-width: 960px; margin: 0 auto; }
+.controls { display: flex; gap: 0.6rem; justify-content: center; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; }
+.controls select, .controls input, .controls button {
+  padding: 0.4rem 0.6rem; border-radius: 6px; border: 1px solid rgba(128,128,128,0.35);
+  background: inherit; color: inherit; font-size: 0.95rem;
+}
+.controls button { cursor: pointer; background: rgba(100,148,237,0.25); }
+.error { color: #e74c3c; margin: 0.5rem 0; }
+
+.stats-row { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; margin-bottom: 1rem; }
+.stat {
+  display: flex; flex-direction: column; align-items: center; min-width: 150px;
+  padding: 0.6rem 1rem; border-radius: 8px; background: rgba(128,128,128,0.12);
+}
+.stat .label { font-size: 0.75rem; text-transform: uppercase; opacity: 0.7; }
+.stat .val { font-size: 1.4rem; font-weight: 600; }
+.stat .when { font-size: 0.75rem; opacity: 0.75; }
+
+.chart { width: 100%; height: auto; }
+.gridline { stroke: rgba(128,128,128,0.25); stroke-width: 1; }
+.tick { font-size: 11px; fill: currentColor; opacity: 0.7; }
+.band { fill: rgba(100, 148, 237, 0.25); }
+.avgline { stroke: cornflowerblue; stroke-width: 1.6; }
+.chart-empty, .chart-note { text-align: center; opacity: 0.7; font-size: 0.85rem; }

@@ -18,6 +18,16 @@ fn db_status() -> Result<db::DbStatus, String> {
     db::status().map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn query_series(metric: String, start: String, end: String) -> Result<Vec<db::SeriesPoint>, String> {
+    db::series_daily(&metric, &start, &end)
+}
+
+#[tauri::command]
+fn range_stats(metric: String, start: String, end: String) -> Result<db::RangeStats, String> {
+    db::range_stats(&metric, &start, &end)
+}
+
 async fn run_websocket(app_handle: AppHandle, recorder: &mut Option<db::Recorder>) {
     dotenvy::dotenv().ok();
     let api_key = env::var("AMBIENT_API_KEY").expect("AMBIENT_API_KEY must be set");
@@ -139,7 +149,7 @@ pub fn run() {
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet, db_status])
+        .invoke_handler(tauri::generate_handler![greet, db_status, query_series, range_stats])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

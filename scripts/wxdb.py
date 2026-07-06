@@ -152,20 +152,32 @@ SOURCES = [
      "Live stream recorded by the Tauri app."),
     ("ksan_metar", "KSAN METAR climatological records", "San Diego Intl (off-site)",
      None, "60 min",
-     "Planned gap-fill for 2018-2020. Off-site; never preferred over station data."),
-    ("sdcard", "WS-1002 on-device SD card", "WS-1002-WiFi",
-     None, "unknown",
-     "Not yet pulled/characterized."),
+     "Fallback gap-fill. Off-site; never preferred over station data."),
+    ("wu_pws", "Weather Underground PWS KCALAJOL6", "Zephyr then WS-1002-WiFi",
+     "Legacy/WU-Rescue", "5 min",
+     "Same-roof uploads: Nov 2012 - Jun 2018 (Zephyr), Sep 2018 - present "
+     "(WS-1002). 5-min aggregates (high/low/avg). Primary fill for the "
+     "2018-2022 holes."),
+    ("msdsd", "MSDSD Mt Soledad mesonet (SDG&E)", "MSDSD (off-site, 0.5 km)",
+     "Legacy/MSDSD-Rescue", "10 min",
+     "Temp/dewpoint/RH/wind only; no rain/solar/pressure. Synoptic API "
+     "history is paywalled; free tier = rolling week."),
 ]
 
 # Priority map from ARCHITECTURE.md §3.3. Epochs computed in ensure_schema().
 # (start_iso, end_iso_or_None, kind, rank)
+# wu_pws is the same physical roof (KCALAJOL6), so it ranks directly under
+# each era's native logger and fills that logger's holes. SD card was a dead
+# end (checked Jul 2026, empty); msdsd is off-site fallback for the one true
+# instrument gap (~Aug 28 - Sep 27, 2018).
 PRIORITY = [
     ("2009-09-01", "2018-09-01", "cumulus_log", 1),
-    ("2018-09-01", "2020-04-19", "sdcard",      1),
-    ("2018-09-01", "2020-04-19", "ksan_metar",  2),
+    ("2012-11-29", "2018-09-01", "wu_pws",      2),
+    ("2018-09-01", "2020-04-19", "wu_pws",      1),
+    ("2018-09-01", "2020-04-19", "msdsd",       2),
     ("2020-04-19", "2025-08-17", "mdb",         1),
     ("2020-04-19", "2025-08-17", "amb_rest",    2),
+    ("2020-04-19", "2025-08-17", "wu_pws",      3),
     ("2025-08-17", None,         "amb_rest",    1),
     ("2025-08-17", None,         "amb_ws",      2),
 ]

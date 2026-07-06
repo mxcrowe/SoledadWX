@@ -40,9 +40,146 @@ interface DbStatus {
   today_rain_in: number | null;
 }
 
+interface SeriesPoint { t: number; avg: number; min: number; max: number; n: number }
+interface RangeStats {
+  metric: string;
+  min_value: number; min_ts: number;
+  max_value: number; max_ts: number;
+  avg_value: number; n_samples: number; days_covered: number;
+  wind_run_mi: number | null;
+}
+
+const METRICS: [string, string, string][] = [
+  ["tempf", "Outdoor temperature", "°F"],
+  ["humidity", "Outdoor humidity", "%"],
+  ["dewpointf", "Dew point", "°F"],
+  ["windspeedmph", "Wind speed", "mph"],
+  ["windgustmph", "Wind gust", "mph"],
+  ["winddir", "Wind direction", "°"],
+  ["baromrelin", "Pressure (rel)", "inHg"],
+  ["dailyrainin", "Daily rain", "in"],
+  ["solarradiation", "Solar radiation", "W/m²"],
+  ["uv", "UV index", ""],
+  ["tempinf", "Indoor temperature", "°F"],
+];
+
+const fmtTs = (ts: number) =>
+  ts ? new Date(ts * 1000).toLocaleString(undefined, {
+    year: "numeric", month: "short", day: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  }) : "—";
+
+function Chart({ series, unit }: { series: SeriesPoint[]; unit: string }) {
+  if (series.length === 0) return <div className="chart-empty">No data in range.</div>;
+  const W = 900, H = 320, PL = 56, PR = 12, PT = 12, PB = 28;
+  const t0 = series[0].t, t1 = series[series.length - 1].t || t0 + 1;
+  const lo = Math.min(...series.map(p => p.min));
+  const hi = Math.max(...series.map(p => p.max));
+  const span = hi - lo || 1;
+  const x = (t: number) => PL + ((t - t0) / (t1 - t0 || 1)) * (W - PL - PR);
+  const y = (v: number) => PT + (1 - (v - lo) / span) * (H - PT - PB);
+  const band =
+    series.map(p => `${x(p.t).toFixed(1)},${y(p.max).toFixed(1)}`).join(" ") + " " +
+    [...series].reverse().map(p => `${x(p.t).toFixed(1)},${y(p.min).toFixed(1)}`).join(" ");
+  const line = series.map(p => `${x(p.t).toFixed(1)},${y(p.avg).toFixed(1)}`).join(" ");
+  const yticks = [0, 0.25, 0.5, 0.75, 1].map(f => lo + f * span);
+  const nx = Math.min(6, series.length);
+  const xticks = Array.from({ length: nx }, (_, i) => t0 + ((t1 - t0) * i) / (nx - 1 || 1));
+  const spanDays = (t1 - t0) / 86400;
+  const fmtX = (t: number) => {
+    const d = new Date(t * 1000);
+    return spanDays > 700
+      ? String(d.getUTCFullYear())
+      : d.toLocaleDateString(undefined, { month: "short", year: "2-digit" });
+  };
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="chart">
+      {yticks.map((v, i) => (
+        <g key={i}>
+          <line x1={PL} x2={W - PR} y1={y(v)} y2={y(v)} className="gridline" />
+          <text x={PL - 6} y={y(v) + 4} className="tick" textAnchor="end">
+            {v.toFixed(span < 5 ? 2 : 1)}
+          </text>
+        </g>
+      ))}
+      {xticks.map((t, i) => (
+        <text key={i} x={x(t)} y={H - 8} className="tick" textAnchor="middle">{fmtX(t)}</text>
+      ))}
+      <polygon points={band} className="band" />
+      <polyline points={line} className="avgline" fill="none" />
+      <text x={PL} y={PT + 2} className="tick">{unit}</text>
+    </svg>
+  );
+}
+
+function Analyst() {
+  const today = new Date().toISOString().slice(0, 10);
+  const [metric, setMetric] = useState("tempf");
+  const [start, setStart] = useState("2009-09-06");
+  const [end, setEnd] = useState(today);
+  const [series, setSeries] = useState<SeriesPoint[] | null>(null);
+  const [stats, setStats] = useState<RangeStats | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const unit = METRICS.find(m => m[0] === metric)?.[2] ?? "";
+
+  const run = () => {
+    setBusy(true); setErr(null);
+    Promise.all([
+      invoke<SeriesPoint[]>("query_series", { metric, start, end }),
+      invoke<RangeStats>("range_stats", { metric, start, end }),
+    ])
+      .then(([s, st]) => { setSeries(s); setStats(st); })
+      .catch(e => { setErr(String(e)); setSeries(null); setStats(null); })
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <div className="analyst">
+      <div className="controls">
+        <select value={metric} onChange={e => setMetric(e.target.value)}>
+          {METRICS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+        </select>
+        <input type="date" value={start} min="2009-09-06" max={today}
+               onChange={e => setStart(e.target.value)} />
+        <span>→</span>
+        <input type="date" value={end} min="2009-09-06" max={today}
+               onChange={e => setEnd(e.target.value)} />
+        <button onClick={run} disabled={busy}>{busy ? "Crunching…" : "Analyze"}</button>
+      </div>
+      {err && <div className="error">{err}</div>}
+      {stats && (
+        <div className="stats-row">
+          <div className="stat"><span className="label">Min</span>
+            <span className="val">{stats.min_value.toFixed(2)} {unit}</span>
+            <span className="when">{fmtTs(stats.min_ts)}</span></div>
+          <div className="stat"><span className="label">Max</span>
+            <span className="val">{stats.max_value.toFixed(2)} {unit}</span>
+            <span className="when">{fmtTs(stats.max_ts)}</span></div>
+          <div className="stat"><span className="label">Average</span>
+            <span className="val">{stats.avg_value.toFixed(2)} {unit}</span>
+            <span className="when">{stats.n_samples.toLocaleString()} samples / {stats.days_covered.toLocaleString()} days</span></div>
+          {stats.wind_run_mi != null && (
+            <div className="stat"><span className="label">Wind run</span>
+              <span className="val">{Math.round(stats.wind_run_mi).toLocaleString()} mi</span>
+              <span className="when">Σ daily avg × 24 h</span></div>
+          )}
+        </div>
+      )}
+      {series && <Chart series={series} unit={unit} />}
+      {series && series.length > 0 && (
+        <p className="chart-note">
+          Band = daily min→max · line = daily average · {series.length.toLocaleString()} days shown
+        </p>
+      )}
+    </div>
+  );
+}
+
 function App() {
   const [reading, setReading] = useState<WeatherReading | null>(null);
   const [status, setStatus] = useState<DbStatus | null>(null);
+  const [view, setView] = useState<"live" | "analyst">("live");
 
   useEffect(() => {
     const unlisten = listen<WeatherReading>("weather-reading", (event) => {
@@ -69,9 +206,16 @@ function App() {
   return (
     <main className="container">
       <h1>SoledadWX</h1>
-      <p>Raw Telemetry Firehose</p>
+      <div className="tabs">
+        <button className={view === "live" ? "tab active" : "tab"}
+                onClick={() => setView("live")}>Live</button>
+        <button className={view === "analyst" ? "tab active" : "tab"}
+                onClick={() => setView("analyst")}>Analyst</button>
+      </div>
 
-      {status && (
+      {view === "analyst" && <Analyst />}
+
+      {view === "live" && status && (
         <div className="status-bar">
           <span className={recording ? "rec-dot rec-on" : "rec-dot rec-off"}>●</span>
           <span>
@@ -87,7 +231,7 @@ function App() {
         </div>
       )}
 
-      {reading ? (
+      {view === "live" && (reading ? (
         <div className="telemetry-grid">
           {/* Group 1: Outdoor Conditions */}
           <div className="data-box"><span className="label">Temp (Out)</span><span className="val">{reading.tempf}°F</span></div>
@@ -124,7 +268,7 @@ function App() {
         </div>
       ) : (
         <div className="loading">Waiting for data from weather station...</div>
-      )}
+      ))}
     </main>
   );
 }
