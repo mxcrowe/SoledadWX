@@ -65,3 +65,5 @@ HP2000*/
 # Environment Variables
 .env
 .env.*
+*.db-wal
+*.db-shm

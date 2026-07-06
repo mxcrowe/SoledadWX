@@ -93,6 +93,9 @@ def main() -> int:
             ts = rec.get("epoch")
             if ts is None:
                 continue
+            ts = int(ts)
+            if ts > 100_000_000_000:  # older WU records use millisecond epochs
+                ts //= 1000
             n_recs += 1
             for canon, val in extract(rec):
                 batch.append((mids[canon], int(ts), sid, val))
