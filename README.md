@@ -21,9 +21,11 @@ The live-data pipeline works end-to-end (Rust WebSocket → React UI), but no pe
 | AmbientWeather REST historical rescue | ✅ Complete (267 pages, ~76,548 records, Aug 2025 → May 2026) |
 | HP2000-history.mdb (2020–2025) | ✅ Verified readable via ODBC |
 | Cumulus historical logs (2009–2018) | ✅ Confirmed solid via Cumulus app; file-level inventory pending |
-| KSAN METAR gap-fill (2018–2020) | ⏳ Planned via NOAA/NCEI |
-| WS-1002 SD card | ⏳ Not yet pulled |
-| SQLite schema | ⏳ Pending Phase 0 completion |
+| SQLite archive (11.7M observations, 2009→present) | ✅ Built + validated — see `data/DATA_REPORT.md` |
+| Historical importers (Cumulus, MDB, Ambient) | ✅ Complete, idempotent, unit-verified |
+| Canonical resolver + resampler | ✅ Working (`scripts/wxquery.py`) |
+| KSAN METAR gap-fill (1,596 missing days, mostly 2018–2022) | ⏳ Planned via NOAA/NCEI |
+| WS-1002 SD card | ⏳ Not yet pulled — now essential (MDB era has big internal holes) |
 | Photorealistic gauge UI | ⏳ Phase 1 |
 | Historical importers | ⏳ Phase 3 |
 | Analyst UI | ⏳ Phase 4 |

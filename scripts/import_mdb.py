@@ -64,7 +64,7 @@ COLUMNS = {
 # Post-conversion sanity bounds (drop and count anything outside — protects
 # the archive from corrupt rows without failing the whole import).
 BOUNDS = {
-    "tempf": (-30.0, 130.0), "tempinf": (20.0, 130.0),
+    "tempf": (20.0, 130.0), "tempinf": (20.0, 130.0),
     "dewpointf": (-40.0, 100.0), "windchillf": (-40.0, 130.0),
     "heatindexf": (-40.0, 150.0),
     "humidity": (0.0, 100.0), "humidityin": (0.0, 100.0),
@@ -74,7 +74,7 @@ BOUNDS = {
     "rainratein": (0.0, 12.0), "dailyrainin": (0.0, 15.0),
     "weeklyrainin": (0.0, 30.0), "monthlyrainin": (0.0, 40.0),
     "yearlyrainin": (0.0, 80.0),
-    "solarradiation": (0.0, 1500.0), "uv": (0.0, 16.0),
+    "solarradiation": (0.0, 1500.0), "uv": (0.0, 13.0),
 }
 
 

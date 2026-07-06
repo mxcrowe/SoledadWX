@@ -135,8 +135,8 @@ Same `observations` table, additional `kind` values (e.g., `nws_forecast`, `open
 
 ## 5. Open questions / known unknowns
 
-1. **SD card depth and format** — needs physical pull and characterization. Could shrink the KSAN gap-fill window or eliminate it entirely.
-2. **KSAN METAR ingest** — exact NCEI dataset to use (ISD-Lite vs. ASOS 5-minute), automation vs. one-shot CSV download, and how to flag off-site data in `quality_flag`.
+1. **SD card depth and format** — needs physical pull and characterization. Now *essential*, not optional: validation revealed the MDB era has huge internal holes (620 days missing May 2020 → Feb 2022, ~130 days late 2022, ~30-day chunks elsewhere). Total archive gap across 17 years: **1,596 days**, mostly 2018–2022. See `data/DATA_REPORT.md` §2 for the full gap inventory.
+2. **KSAN METAR ingest** — exact NCEI dataset to use (ISD-Lite vs. ASOS 5-minute), automation vs. one-shot CSV download, and how to flag off-site data in `quality_flag`. Scope now includes the MDB-era internal gaps, not just 2018-2020.
 3. **Cumulus folder integrity** — confirmed runnable in the Cumulus app; per-file/per-month integrity not yet spot-checked at the file level. Risk of partial months, encoding issues, or year-2038-style date quirks.
 4. **Station #3 model** — unknown; affects whether new sources are likely to be Ambient-cloud-compatible or need a fresh importer kind.
 5. **Display target** — currently a desktop monitor. Future possibility: dedicated always-on small screen (Raspberry Pi, etc.).

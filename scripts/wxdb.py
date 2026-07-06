@@ -88,6 +88,25 @@ CREATE TABLE IF NOT EXISTS source_priority (
     rank         INTEGER NOT NULL,      -- 1 = most preferred within the period
     PRIMARY KEY (period_start, source_kind)
 );
+
+-- The canonical resolver: best-known value per (metric, timestamp), chosen
+-- by the time-period priority map. Sources not listed for a period are
+-- excluded entirely (e.g. off-site KSAN data can be rank-limited to gap
+-- periods only). This is the ARCHITECTURE.md §3.3 "canonical view".
+CREATE VIEW IF NOT EXISTS canonical_observations AS
+SELECT metric_id, ts_utc, source_id, value FROM (
+    SELECT o.metric_id, o.ts_utc, o.source_id, o.value,
+           ROW_NUMBER() OVER (
+               PARTITION BY o.metric_id, o.ts_utc
+               ORDER BY p.rank
+           ) AS rn
+    FROM observations o
+    JOIN sources s ON s.id = o.source_id
+    JOIN source_priority p ON p.source_kind = s.kind
+        AND o.ts_utc >= p.period_start
+        AND (p.period_end IS NULL OR o.ts_utc < p.period_end)
+)
+WHERE rn = 1;
 """
 
 # Canonical metric dictionary — Ambient vocabulary, imperial units.

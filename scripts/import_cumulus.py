@@ -57,11 +57,13 @@ MONTHLY_MAP = {
     21: "feelslikef",       # Cumulus "apparent temperature"
 }
 
+# tempf floor 20F / humidity floor 1%: La Jolla has never seen either bound;
+# exact-zero readings are Fine Offset console dropouts (14+56 found in 2016).
 BOUNDS = {
-    "tempf": (-30.0, 130.0), "tempinf": (20.0, 130.0),
+    "tempf": (20.0, 130.0), "tempinf": (20.0, 130.0),
     "dewpointf": (-40.0, 100.0), "windchillf": (-40.0, 130.0),
     "heatindexf": (-40.0, 150.0), "feelslikef": (-40.0, 150.0),
-    "humidity": (0.0, 100.0), "humidityin": (0.0, 100.0),
+    "humidity": (1.0, 100.0), "humidityin": (0.0, 100.0),
     "windspeedmph": (0.0, 150.0), "windgustmph": (0.0, 200.0),
     "winddir": (0.0, 360.0),
     "baromrelin": (27.0, 32.0),
