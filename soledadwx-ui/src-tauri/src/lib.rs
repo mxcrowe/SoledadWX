@@ -4,6 +4,7 @@ use std::env;
 use tauri::{AppHandle, Emitter};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 
+pub mod db;
 pub mod models;
 use models::AmbientReading;
 
@@ -12,7 +13,12 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
-async fn run_websocket(app_handle: AppHandle) {
+#[tauri::command]
+fn db_status() -> Result<db::DbStatus, String> {
+    db::status().map_err(|e| e.to_string())
+}
+
+async fn run_websocket(app_handle: AppHandle, recorder: &mut Option<db::Recorder>) {
     dotenvy::dotenv().ok();
     let api_key = env::var("AMBIENT_API_KEY").expect("AMBIENT_API_KEY must be set");
     let app_key = env::var("AMBIENT_APP_KEY").expect("AMBIENT_APP_KEY must be set");
@@ -67,7 +73,18 @@ async fn run_websocket(app_handle: AppHandle) {
                                     // Deserialize exactly into our Rust struct
                                     if let Ok(reading) = serde_json::from_value::<AmbientReading>(reading_data.clone()) {
                                         println!("Successfully parsed weather reading! Temp: {:?}", reading.tempf);
-                                        
+
+                                        // Persist to the archive. A DB error must
+                                        // never take down the live stream: log and
+                                        // carry on; INSERT OR IGNORE makes retries
+                                        // safe after reconnects.
+                                        if let Some(rec) = recorder.as_mut() {
+                                            match rec.record(&reading) {
+                                                Ok(n) => println!("Recorded {} metrics to archive.", n),
+                                                Err(e) => println!("Archive write failed: {:?}", e),
+                                            }
+                                        }
+
                                         // Emit it over the bridge to React!
                                         if let Err(e) = app_handle.emit("weather-reading", reading) {
                                             println!("Failed to emit to frontend: {:?}", e);
@@ -95,8 +112,18 @@ async fn run_websocket(app_handle: AppHandle) {
 
 fn start_weather_listener(app_handle: AppHandle) {
     tauri::async_runtime::spawn(async move {
+        let mut recorder = match db::Recorder::open() {
+            Ok(r) => {
+                println!("Archive recorder ready at {:?}", db::db_path());
+                Some(r)
+            }
+            Err(e) => {
+                println!("Archive recorder unavailable ({:?}) — streaming without persistence.", e);
+                None
+            }
+        };
         loop {
-            run_websocket(app_handle.clone()).await;
+            run_websocket(app_handle.clone(), &mut recorder).await;
             println!("Connection dropped. Reconnecting in 5 seconds...");
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         }
@@ -112,7 +139,7 @@ pub fn run() {
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet])
+        .invoke_handler(tauri::generate_handler![greet, db_status])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

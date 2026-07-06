@@ -10,15 +10,16 @@ The full vision, technology choices, and data architecture are in **[ARCHITECTUR
 
 ## Status — May 2026
 
-**Phase 0 — Data archaeology** *(active)*
+**Phase 0–2 complete: the data engine is built.** *(July 2026 sprint)*
 
-The live-data pipeline works end-to-end (Rust WebSocket → React UI), but no persistence layer or visual design has been built yet. Current focus is cataloging every source of historical weather data and rescuing at-risk data before it ages out of providers' rolling windows.
+The archive holds **11.7M observations spanning Sep 2009 → present**, assembled from three sources, unit-verified, gap-mapped, and continuously extended by a live recorder inside the Tauri app. See `data/DATA_REPORT.md` for the validation report. Next up: KSAN gap-fill, SD card recovery, and the Fish Tank UI (Phase 1 visuals — deliberately deferred; the aesthetic needs iterative design, not sprint coding).
 
 | Component | Status |
 |---|---|
 | Live AmbientWeather WebSocket (Rust) | ✅ Working |
-| Telemetry firehose UI (React) | ✅ Working (placeholder, not the final design) |
-| AmbientWeather REST historical rescue | ✅ Complete (267 pages, ~76,548 records, Aug 2025 → May 2026) |
+| Live recorder (WebSocket → SQLite archive) | ✅ Working — every reading persisted |
+| Telemetry firehose UI + archive status bar | ✅ Working (placeholder, not the final design) |
+| AmbientWeather REST historical rescue | ✅ Complete (Aug 2025 → Jul 2026, re-runnable) |
 | HP2000-history.mdb (2020–2025) | ✅ Verified readable via ODBC |
 | Cumulus historical logs (2009–2018) | ✅ Confirmed solid via Cumulus app; file-level inventory pending |
 | SQLite archive (11.7M observations, 2009→present) | ✅ Built + validated — see `data/DATA_REPORT.md` |

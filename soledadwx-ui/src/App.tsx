@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 
 interface WeatherReading {
@@ -29,8 +30,19 @@ interface WeatherReading {
   lastRain?: string;
 }
 
+interface DbStatus {
+  total_observations: number;
+  live_rows_today: number;
+  last_write_utc: number | null;
+  today_high_f: number | null;
+  today_low_f: number | null;
+  today_max_gust_mph: number | null;
+  today_rain_in: number | null;
+}
+
 function App() {
   const [reading, setReading] = useState<WeatherReading | null>(null);
+  const [status, setStatus] = useState<DbStatus | null>(null);
 
   useEffect(() => {
     const unlisten = listen<WeatherReading>("weather-reading", (event) => {
@@ -41,10 +53,39 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    const poll = () => invoke<DbStatus>("db_status").then(setStatus).catch(() => {});
+    poll();
+    const id = setInterval(poll, 30_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const lastWriteAge =
+    status?.last_write_utc != null
+      ? Math.round(Date.now() / 1000 - status.last_write_utc)
+      : null;
+  const recording = lastWriteAge != null && lastWriteAge < 120;
+
   return (
     <main className="container">
       <h1>SoledadWX</h1>
       <p>Raw Telemetry Firehose</p>
+
+      {status && (
+        <div className="status-bar">
+          <span className={recording ? "rec-dot rec-on" : "rec-dot rec-off"}>●</span>
+          <span>
+            {recording ? "Recording" : "Not recording"} — archive:{" "}
+            {status.total_observations.toLocaleString()} obs
+          </span>
+          <span className="extremes">
+            Today: {status.today_low_f?.toFixed(1) ?? "--"}°F /{" "}
+            {status.today_high_f?.toFixed(1) ?? "--"}°F · gust{" "}
+            {status.today_max_gust_mph?.toFixed(1) ?? "--"} mph · rain{" "}
+            {status.today_rain_in?.toFixed(2) ?? "--"} in
+          </span>
+        </div>
+      )}
 
       {reading ? (
         <div className="telemetry-grid">

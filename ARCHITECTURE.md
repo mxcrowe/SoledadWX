@@ -120,14 +120,16 @@ Same `observations` table, additional `kind` values (e.g., `nws_forecast`, `open
 
 ## 4. Phases
 
-| # | Name | Goal |
-|---|---|---|
-| 0 | **Data archaeology** *(in progress)* | Catalog every source, characterize formats, rescue at-risk data (Ambient REST), pull SD card, scan Cumulus folder. Lock the schema and priority map. |
-| 1 | The Bermuda Fish Tank | Photorealistic live-data dashboard. Build SVG/Canvas gauge components. Ride the existing WebSocket. |
-| 2 | The Memory Bank | Persist live data into SQLite using the locked schema. Display today's live extremes. |
-| 3 | The Time Machine | Historical importers (MDB → Cumulus → SD card → external gap-fill). Build canonical-view resolver. Validate via overlap zones. |
-| 4 | The Analyst | Second UI mode: scrubbable historical charts, Wind Run, NOAA reports, exports. |
-| 5 | The Oracle | Python sidecar. Hyper-local AI forecasting. Compare against external forecasts as ground truth. |
+| # | Name | Goal | Status |
+|---|---|---|---|
+| 0 | **Data archaeology** | Catalog every source, characterize formats, rescue at-risk data (Ambient REST), scan Cumulus folder. Lock the schema and priority map. | ✅ Done (Jul 2026) — SD card pull still pending |
+| 1 | The Bermuda Fish Tank | Photorealistic live-data dashboard. Build SVG/Canvas gauge components. Ride the existing WebSocket. | Deferred by design — needs iterative visual work |
+| 2 | The Memory Bank | Persist live data into SQLite using the locked schema. Display today's live extremes. | ✅ Done (Jul 2026) — Rust recorder in the Tauri app |
+| 3 | The Time Machine | Historical importers (MDB → Cumulus → external gap-fill). Build canonical-view resolver. Validate via overlap zones. | ✅ Done (Jul 2026) except SD card + KSAN gap-fill |
+| 4 | The Analyst | Second UI mode: scrubbable historical charts, Wind Run, NOAA reports, exports. | Query layer exists (`scripts/wxquery.py`); UI not started |
+| 5 | The Oracle | Python sidecar. Hyper-local AI forecasting. Compare against external forecasts as ground truth. | Not started |
+
+Implementation note: the data engine lives in `scripts/` (Python) with `scripts/wxdb.py` as the schema authority; the Tauri app's `src-tauri/src/db.rs` mirrors that schema for live recording. A 17-year resample takes ~11 s through the canonical view — fine for reports, too slow for interactive charts. The Analyst phase should add a materialized daily-rollup table.
 
 **Phase 0 was inserted ahead of Phase 1** because the original plan would have written the SQLite layer twice — once for live, then refactored once historical sources revealed their full complexity. Lock the schema first.
 

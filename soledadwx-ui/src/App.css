@@ -90,3 +90,20 @@ p {
   color: #666;
 }
 
+
+.status-bar {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin: 0.5rem auto 1rem;
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  background: rgba(128, 128, 128, 0.12);
+  font-size: 0.9rem;
+}
+.rec-dot { font-size: 0.8rem; }
+.rec-on { color: #2ecc71; }
+.rec-off { color: #e74c3c; }
+.extremes { opacity: 0.85; }
