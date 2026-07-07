@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "soledadwx-ui",
+  "productName": "SoledadWX",
   "version": "0.1.0",
   "identifier": "com.morpheus.soledadwx-ui",
   "build": {
@@ -12,9 +12,10 @@
   "app": {
     "windows": [
       {
-        "title": "soledadwx-ui",
-        "width": 800,
-        "height": 600
+        "title": "SoledadWX",
+        "width": 1800,
+        "height": 1150,
+        "maximized": true
       }
     ],
     "security": {
