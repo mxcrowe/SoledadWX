@@ -26,6 +26,7 @@ NEIGHBOR_ROOT = wxdb.ROOT / "Legacy" / "WU-Neighbors"
 STATION_SOURCE = {
     "KCASANDI354": "wu_ksandi354",
     "KCASANDI4366": "wu_ksandi4366",
+    "KCASANDI84": "wu_ksandi84",
 }
 
 

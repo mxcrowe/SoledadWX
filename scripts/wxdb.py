@@ -170,6 +170,9 @@ SOURCES = [
      "Legacy/WU-Neighbors/KCASANDI4366", "5 min",
      "Nearby La Jolla PWS, same microclimate. Gap-fill only (2018 July "
      "outage + Aug-Sep instrument swap). Full parameter set."),
+    ("wu_ksandi84", "Weather Underground PWS KCASANDI84", "Neighbor (~1.5 km)",
+     "Legacy/WU-Neighbors/KCASANDI84", "5 min",
+     "Nearby La Jolla PWS, same microclimate. Gap-fill only (2014 outage)."),
 ]
 
 # Priority map from ARCHITECTURE.md §3.3. Epochs computed in ensure_schema().
@@ -183,6 +186,7 @@ PRIORITY = [
     ("2012-11-29", "2018-09-01", "wu_pws",        2),
     ("2009-09-01", "2018-09-01", "wu_ksandi354",  8),
     ("2009-09-01", "2018-09-01", "wu_ksandi4366", 9),
+    ("2009-09-01", "2018-09-01", "wu_ksandi84",  10),
     ("2018-09-01", "2020-04-19", "wu_pws",        1),
     ("2018-09-01", "2020-04-19", "wu_ksandi4366", 8),
     ("2018-09-01", "2020-04-19", "msdsd",         9),
