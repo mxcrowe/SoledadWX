@@ -135,14 +135,24 @@ Implementation note: the data engine lives in `scripts/` (Python) with `scripts/
 
 ---
 
-## 5. Open questions / known unknowns
+## 5. Gap-fill: final state (Jul 2026)
 
-1. ~~SD card~~ — **dead end** (checked Jul 2026: no data on the card). The 1,596 days of gaps (mostly 2018–2022; see `data/DATA_REPORT.md` §2) must be filled externally.
-2. **MSDSD mesonet gap-fill** — primary external source. Mt Soledad mesonet station ~0.5 km from ours (32°48'51"N 117°14'27"W), same microclimate. Reports temp/dewpoint/RH/wind only — **no rain, solar, or pressure**. Historical access via Synoptic Data API (`scripts/rescue_msdsd.py`, needs `SYNOPTIC_TOKEN`). Open question: its period of record vs. our gap windows.
-3. **Rain/pressure/solar gap-fill** — MSDSD can't provide these; fallback candidates: KSAN METAR (NCEI), San Diego County ALERT rain gauges, NOAA co-op stations. Decide after MSDSD coverage is known.
-3. **Cumulus folder integrity** — confirmed runnable in the Cumulus app; per-file/per-month integrity not yet spot-checked at the file level. Risk of partial months, encoding issues, or year-2038-style date quirks.
-4. **Station #3 model** — unknown; affects whether new sources are likely to be Ambient-cloud-compatible or need a fresh importer kind.
-5. **Display target** — currently a desktop monitor. Future possibility: dedicated always-on small screen (Raspberry Pi, etc.).
+Coverage went **1,596 → 63 missing days** (~99.0% of the 17-year timeline).
+Sources, in priority order, are on-site or ~1 km hyperlocal:
+- On-site primaries: cumulus_log, wu_pws (KCALAJOL6, same roof), mdb, amb_rest, amb_ws
+- Neighbor gap-fill (WU PWS, ~1–1.5 km, distinct source kinds, ranked below all primaries, cross-validated): `wu_ksandi84` (2014), `wu_ksandi354` (2016), `wu_ksandi4366` (2018 July + Aug–Sep swap)
+
+**Remaining 63 days are the floor — do not re-hunt:**
+1. **May 8–19, 2021 (~11 days) — confirmed Weather Underground platform data loss.** Three independent neighbor stations (KCASANDI84, KCASANDI5125, KCALAJOL15) all recorded normally before May 8 and after May 19 but flatline to *exactly zero* on the same days in between. Simultaneous lockstep failure across independent sensors = aggregator-side loss. Gone at source; unrecoverable.
+2. **~52 scattered single days** — brief console dropouts across 17 years; not worth chasing individually.
+
+Dead ends (checked, do not retry): WS-1002 SD card (empty), MSDSD Synoptic history (paywalled; free tier = rolling week), KSAN METAR (off-site sea-level airport — rejected: would pollute the hyperlocal record).
+
+## 5b. Other open questions
+
+1. **Cumulus folder integrity** — confirmed runnable in the Cumulus app; per-file/per-month integrity not yet spot-checked at the file level.
+2. **Station #3 model** — unknown; affects whether new sources are Ambient-cloud-compatible or need a fresh importer kind.
+3. **Display target** — currently a desktop monitor. Future possibility: dedicated always-on small screen (Raspberry Pi, etc.).
 
 ---
 
