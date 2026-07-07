@@ -177,10 +177,39 @@ function Analyst() {
   );
 }
 
+type View =
+  | "console" | "live" | "today" | "microforecast" | "charts"
+  | "records" | "analyst" | "gauges" | "barograph" | "extremes";
+
+const NAV: [View, string, string][] = [
+  ["console", "Console", "▦"],
+  ["live", "Live", "◉"],
+  ["today", "Today/Yesterday", "⇄"],
+  ["microforecast", "Micro-forecast", "☁"],
+  ["charts", "Charts", "∿"],
+  ["records", "Records", "★"],
+  ["analyst", "Analyst", "⌕"],
+  ["gauges", "Gauges", "◎"],
+  ["barograph", "Barograph", "◠"],
+  ["extremes", "Extremes", "⇅"],
+];
+
+const BUILT: View[] = ["console", "live", "analyst"];
+
+function Placeholder({ label }: { label: string }) {
+  return (
+    <div className="placeholder">
+      <div className="placeholder-glyph">◱</div>
+      <h2>{label}</h2>
+      <p>Coming soon</p>
+    </div>
+  );
+}
+
 function App() {
   const [reading, setReading] = useState<WeatherReading | null>(null);
   const [status, setStatus] = useState<DbStatus | null>(null);
-  const [view, setView] = useState<"console" | "live" | "analyst">("console");
+  const [view, setView] = useState<View>("console");
 
   useEffect(() => {
     const unlisten = listen<WeatherReading>("weather-reading", (event) => {
@@ -205,35 +234,31 @@ function App() {
   const recording = lastWriteAge != null && lastWriteAge < 120;
 
   return (
-    <main className="container">
-      <h1>SoledadWX</h1>
-      <div className="tabs">
-        <button className={view === "console" ? "tab active" : "tab"}
-                onClick={() => setView("console")}>Console</button>
-        <button className={view === "live" ? "tab active" : "tab"}
-                onClick={() => setView("live")}>Live</button>
-        <button className={view === "analyst" ? "tab active" : "tab"}
-                onClick={() => setView("analyst")}>Analyst</button>
-      </div>
+    <div className="app-shell">
+      <nav className="sidebar">
+        <div className="brand">SoledadWX</div>
+        <ul className="nav">
+          {NAV.map(([v, label, glyph]) => (
+            <li key={v}
+                className={view === v ? "nav-item active" : "nav-item"}
+                onClick={() => setView(v)}>
+              <span className="nav-glyph">{glyph}</span>{label}
+            </li>
+          ))}
+        </ul>
+        <div className="nav-foot">
+          <span>
+            <span className={recording ? "rec-dot rec-on" : "rec-dot rec-off"}>●</span>{" "}
+            {recording ? "Recording" : "Offline"}
+          </span>
+          {status && <span className="nav-foot-obs">{status.total_observations.toLocaleString()} obs</span>}
+        </div>
+      </nav>
 
+      <main className="content">
       {view === "console" && <Console reading={reading} />}
       {view === "analyst" && <Analyst />}
-
-      {view === "live" && status && (
-        <div className="status-bar">
-          <span className={recording ? "rec-dot rec-on" : "rec-dot rec-off"}>●</span>
-          <span>
-            {recording ? "Recording" : "Not recording"} — archive:{" "}
-            {status.total_observations.toLocaleString()} obs
-          </span>
-          <span className="extremes">
-            Today: {status.today_low_f?.toFixed(1) ?? "--"}°F /{" "}
-            {status.today_high_f?.toFixed(1) ?? "--"}°F · gust{" "}
-            {status.today_max_gust_mph?.toFixed(1) ?? "--"} mph · rain{" "}
-            {status.today_rain_in?.toFixed(2) ?? "--"} in
-          </span>
-        </div>
-      )}
+      {!BUILT.includes(view) && <Placeholder label={NAV.find((n) => n[0] === view)![1]} />}
 
       {view === "live" && (reading ? (
         <div className="telemetry-grid">
@@ -273,7 +298,8 @@ function App() {
       ) : (
         <div className="loading">Waiting for data from weather station...</div>
       ))}
-    </main>
+      </main>
+    </div>
   );
 }
 

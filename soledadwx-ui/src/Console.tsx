@@ -259,14 +259,10 @@ export default function Console({ reading }: { reading: WeatherReading | null })
       </div>
 
       <div className="mx-grid">
-        <Card title="Charts — last 24 h" className="mx-charts">
-          <div className="spark-grid">
-            {SPARKS.map(([m, label, color]) => (
-              <Spark key={m} series={sparks[m] ?? []} label={label} color={color} />
-            ))}
-          </div>
-        </Card>
+        {/* 1 */}
+        <Card title="Temp Gauge"><SteelRadial value={r?.tempf} title="Ext. Temp" unit="°F" min={30} max={110} /></Card>
 
+        {/* 2 */}
         <Card title="Temperature">
           <div className="hero">{fmt(r?.tempf)}<small>°F</small></div>
           <Trend value={s?.temp_trend_f_hr ?? null} unit="°F/hr" />
@@ -276,6 +272,7 @@ export default function Console({ reading }: { reading: WeatherReading | null })
             yesterday={{ hi: s.yesterday.max_temp, lo: s.yesterday.min_temp }} />}
         </Card>
 
+        {/* 3 */}
         <Card title="Apparent · Dew Point">
           <div className="hero">{fmt(r?.feelsLike)}<small>°F</small></div>
           <div className="sub">Feels like</div>
@@ -289,14 +286,23 @@ export default function Console({ reading }: { reading: WeatherReading | null })
           </div>
         </Card>
 
-        <Card title="Pressure">
-          <div className="hero">{fmt(r?.baromrelin, 2)}<small>inHg</small></div>
-          <Trend value={s?.press_trend_in_hr ?? null} dp={3} unit="in/hr" />
-          {s && <HiLo unit="in" dp={2}
-            today={{ hi: s.today.max_press, lo: s.today.min_press }}
-            yesterday={{ hi: s.yesterday.max_press, lo: s.yesterday.min_press }} />}
+        {/* 4 */}
+        <Card title="Charts — last 24 h" className="mx-charts">
+          <div className="spark-grid">
+            {SPARKS.map(([m, label, color]) => (
+              <Spark key={m} series={sparks[m] ?? []} label={label} color={color} />
+            ))}
+          </div>
         </Card>
 
+        {/* 5 */}
+        <Card title="Wind Speed"><SteelRadial value={r?.windspeedmph} title="Wind Speed" unit="mph" max={40} /></Card>
+        {/* 6 */}
+        <Card title="Wind Direction"><SteelWindDir latest={r?.winddir} average={r?.winddir} /></Card>
+        {/* 7 */}
+        <Card title="Wind Rose"><WindRose data={rose} /></Card>
+
+        {/* 8 */}
         <Card title="Wind">
           <div className="hero">{fmt(r?.windspeedmph)}<small>mph</small></div>
           <div className="sub">Gust {fmt(r?.windgustmph)} mph · {r?.winddir != null ? `${r.winddir}° ${cardinal(r.winddir)}` : "--"}</div>
@@ -307,29 +313,31 @@ export default function Console({ reading }: { reading: WeatherReading | null })
           <div className="hl-note">"High" = gust · "Low" = sustained</div>
         </Card>
 
-        <Card title="Wind Speed"><SteelRadial value={r?.windspeedmph} title="Wind Speed" unit="mph" max={40} /></Card>
-        <Card title="Wind Direction"><SteelWindDir latest={r?.winddir} average={r?.winddir} /></Card>
-        <Card title="Wind Rose"><WindRose data={rose} /></Card>
+        {/* 9 */}
+        <Card title="Pressure Gauge"><SteelRadial value={r?.baromrelin} title="Pressure" unit="inHg" min={29} max={31} decimals={2} /></Card>
 
+        {/* 10 */}
+        <Card title="Pressure">
+          <div className="hero">{fmt(r?.baromrelin, 2)}<small>inHg</small></div>
+          <Trend value={s?.press_trend_in_hr ?? null} dp={3} unit="in/hr" />
+          {s && <HiLo unit="in" dp={2}
+            today={{ hi: s.today.max_press, lo: s.today.min_press }}
+            yesterday={{ hi: s.yesterday.max_press, lo: s.yesterday.min_press }} />}
+        </Card>
+
+        {/* 11 */}
         <Card title="Rainfall">
           <div className="hero">{fmt(r?.dailyrainin, 2)}<small>in today</small></div>
           <div className="pairline"><span>Rate <b>{fmt(r?.hourlyrainin, 2)} in/hr</b></span><span>Yesterday <b>{fmt(s?.rain_yesterday_in, 2)} in</b></span></div>
           <div className="pairline"><span>Month <b>{fmt(s?.rain_month_in, 2)} in</b></span><span>Year <b>{fmt(s?.rain_year_in, 2)} in</b></span></div>
+          <div className="pairline"><span>Max rate today <b>{fmt(s?.today.max_rain_rate.value, 2)} in/hr</b></span><span>Yest <b>{fmt(s?.yesterday.max_rain_rate.value, 2)} in/hr</b></span></div>
         </Card>
 
+        {/* 12 */}
         <Card title="Solar · UV">
           <div className="hero">{fmt(r?.solarradiation, 0)}<small>W/m²</small></div>
           <div className="pairline"><span>UV index <b>{fmt(r?.uv, 0)}</b></span>
             <span>{(r?.solarradiation ?? 0) > 10 ? "☀️ Sun up" : "🌙 Sun down"}</span></div>
-        </Card>
-
-        <Card title="Temp Gauge"><SteelRadial value={r?.tempf} title="Ext. Temp" unit="°F" min={30} max={110} /></Card>
-        <Card title="Pressure Gauge"><SteelRadial value={r?.baromrelin} title="Pressure" unit="inHg" min={29} max={31} decimals={2} /></Card>
-
-        <Card title="Rain Rate Extremes">
-          {s && <HiLo unit="in/hr" dp={2}
-            today={{ hi: s.today.max_rain_rate, lo: { value: null, ts: null } }}
-            yesterday={{ hi: s.yesterday.max_rain_rate, lo: { value: null, ts: null } }} />}
         </Card>
       </div>
     </div>

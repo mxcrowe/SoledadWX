@@ -15,10 +15,42 @@
 body {
   margin: 0;
   padding: 0;
-  display: flex;
-  place-items: center;
+  display: block;
   min-height: 100vh;
 }
+
+/* ---------- App shell: left nav rail + content ---------- */
+.app-shell { display: flex; align-items: stretch; min-height: 100vh; width: 100%; }
+
+.sidebar {
+  width: 210px; flex-shrink: 0;
+  background: rgba(0, 0, 0, 0.28);
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex; flex-direction: column;
+  padding: 1.1rem 0.7rem;
+}
+.brand {
+  font-size: 1.5rem; font-weight: 700; font-style: italic;
+  letter-spacing: 0.02em; color: #eae8e2;
+  padding: 0.2rem 0.6rem 1.2rem;
+}
+.nav { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.2rem; }
+.nav-item {
+  display: flex; align-items: center; gap: 0.7rem;
+  padding: 0.55rem 0.8rem; border-radius: 8px; cursor: pointer;
+  font-size: 1rem; opacity: 0.78; user-select: none;
+}
+.nav-item:hover { background: rgba(255, 255, 255, 0.05); opacity: 1; }
+.nav-item.active { background: rgba(255, 255, 255, 0.10); opacity: 1; font-weight: 600; }
+.nav-glyph { width: 1.3rem; text-align: center; font-size: 1.05rem; opacity: 0.85; }
+
+.nav-foot {
+  margin-top: auto; display: flex; flex-direction: column; gap: 0.15rem;
+  padding: 0.6rem 0.8rem; font-size: 0.8rem; opacity: 0.75;
+}
+.nav-foot-obs { opacity: 0.6; font-variant-numeric: tabular-nums; }
+
+.content { flex: 1; min-width: 0; padding: 1.2rem 1.4rem; }
 
 .container {
   margin: 0 auto;
@@ -254,3 +286,10 @@ p {
 .spark-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; width: 100%; }
 .spark svg { width: 100%; height: auto; background: rgba(0,0,0,0.25); border-radius: 4px; }
 .spark span, .spark-empty { font-size: 0.72rem; opacity: 0.7; }
+
+.placeholder {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  min-height: 60vh; opacity: 0.5; gap: 0.4rem;
+}
+.placeholder-glyph { font-size: 3rem; opacity: 0.5; }
+.placeholder h2 { margin: 0; font-weight: 600; }
