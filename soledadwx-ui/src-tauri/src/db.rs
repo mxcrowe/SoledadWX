@@ -538,3 +538,128 @@ pub fn series_hours(metric: &str, hours: i64) -> Result<Vec<SeriesPoint>, String
         .map_err(|e| e.to_string())?;
     Ok(rows)
 }
+
+// ---------- Min/Max Records (all-time hall of fame) ----------
+
+#[derive(serde::Serialize)]
+pub struct RecordRow {
+    pub label: String,
+    pub value: f64,
+    pub unit: String,
+    pub when_ts: Option<i64>,     // epoch for instantaneous records
+    pub when_day: Option<String>, // ISO date for daily-derived records
+}
+
+#[derive(serde::Serialize)]
+pub struct RecordCategory {
+    pub name: String,
+    pub rows: Vec<RecordRow>,
+}
+
+// Instantaneous all-time extreme from daily_rollups (value + the epoch it occurred).
+fn inst_ext(conn: &Connection, metric: &str, want_max: bool) -> Option<(f64, i64)> {
+    let (vcol, tscol, ord) = if want_max {
+        ("max_value", "ts_max", "DESC")
+    } else {
+        ("min_value", "ts_min", "ASC")
+    };
+    conn.query_row(
+        &format!(
+            "SELECT r.{vcol}, r.{tscol} FROM daily_rollups r
+             JOIN metrics m ON m.id = r.metric_id
+             WHERE m.name = ?1 ORDER BY r.{vcol} {ord} LIMIT 1"
+        ),
+        [metric],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )
+    .ok()
+}
+
+// Daily-derived extreme (e.g. highest daily minimum): value + the day it happened.
+fn day_ext(conn: &Connection, metric: &str, expr: &str, want_max: bool) -> Option<(f64, String)> {
+    let ord = if want_max { "DESC" } else { "ASC" };
+    conn.query_row(
+        &format!(
+            "SELECT {expr} AS v, r.day_utc FROM daily_rollups r
+             JOIN metrics m ON m.id = r.metric_id
+             WHERE m.name = ?1 ORDER BY v {ord} LIMIT 1"
+        ),
+        [metric],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )
+    .ok()
+}
+
+fn inst_row(conn: &Connection, label: &str, metric: &str, unit: &str, max: bool) -> Option<RecordRow> {
+    inst_ext(conn, metric, max).map(|(v, ts)| RecordRow {
+        label: label.into(), value: v, unit: unit.into(), when_ts: Some(ts), when_day: None,
+    })
+}
+
+fn day_row(conn: &Connection, label: &str, metric: &str, expr: &str, unit: &str, max: bool) -> Option<RecordRow> {
+    day_ext(conn, metric, expr, max).map(|(v, d)| RecordRow {
+        label: label.into(), value: v, unit: unit.into(), when_ts: None, when_day: Some(d),
+    })
+}
+
+pub fn records() -> Result<Vec<RecordCategory>, rusqlite::Error> {
+    let conn = Connection::open(db_path())?;
+    let mut cats: Vec<RecordCategory> = Vec::new();
+
+    let temperature = [
+        inst_row(&conn, "Highest temperature", "tempf", "°F", true),
+        inst_row(&conn, "Lowest temperature", "tempf", "°F", false),
+        inst_row(&conn, "Highest heat index", "heatindexf", "°F", true),
+        inst_row(&conn, "Lowest wind chill", "windchillf", "°F", false),
+        inst_row(&conn, "Highest feels-like", "feelslikef", "°F", true),
+        inst_row(&conn, "Lowest feels-like", "feelslikef", "°F", false),
+        day_row(&conn, "Highest daily minimum", "tempf", "r.min_value", "°F", true),
+        day_row(&conn, "Lowest daily maximum", "tempf", "r.max_value", "°F", false),
+        inst_row(&conn, "Highest dew point", "dewpointf", "°F", true),
+        inst_row(&conn, "Lowest dew point", "dewpointf", "°F", false),
+        day_row(&conn, "Highest daily temp range", "tempf", "(r.max_value - r.min_value)", "°F", true),
+        day_row(&conn, "Lowest daily temp range", "tempf", "(r.max_value - r.min_value)", "°F", false),
+    ];
+    cats.push(RecordCategory { name: "Temperature".into(), rows: temperature.into_iter().flatten().collect() });
+
+    let mut wind: Vec<RecordRow> = [
+        inst_row(&conn, "Highest gust", "windgustmph", "mph", true),
+        inst_row(&conn, "Highest sustained wind", "windspeedmph", "mph", true),
+    ].into_iter().flatten().collect();
+    if let Some((v, d)) = conn.query_row(
+        "SELECT wind_run_mi, date FROM daily_summaries
+         WHERE wind_run_mi IS NOT NULL ORDER BY wind_run_mi DESC LIMIT 1",
+        [], |r| Ok((r.get::<_, f64>(0)?, r.get::<_, String>(1)?)),
+    ).ok() {
+        wind.push(RecordRow { label: "Highest daily wind run".into(), value: v, unit: "mi".into(), when_ts: None, when_day: Some(d) });
+    }
+    cats.push(RecordCategory { name: "Wind".into(), rows: wind });
+
+    let rain = [
+        day_row(&conn, "Wettest day", "dailyrainin", "r.max_value", "in", true),
+        inst_row(&conn, "Highest rain rate", "rainratein", "in/hr", true),
+        day_row(&conn, "Wettest month", "monthlyrainin", "r.max_value", "in", true),
+        day_row(&conn, "Wettest year", "yearlyrainin", "r.max_value", "in", true),
+    ];
+    cats.push(RecordCategory { name: "Rainfall".into(), rows: rain.into_iter().flatten().collect() });
+
+    let humidity = [
+        inst_row(&conn, "Highest humidity", "humidity", "%", true),
+        inst_row(&conn, "Lowest humidity", "humidity", "%", false),
+    ];
+    cats.push(RecordCategory { name: "Humidity".into(), rows: humidity.into_iter().flatten().collect() });
+
+    let pressure = [
+        inst_row(&conn, "Highest pressure", "baromrelin", "inHg", true),
+        inst_row(&conn, "Lowest pressure", "baromrelin", "inHg", false),
+    ];
+    cats.push(RecordCategory { name: "Pressure".into(), rows: pressure.into_iter().flatten().collect() });
+
+    let solar = [
+        inst_row(&conn, "Highest solar radiation", "solarradiation", "W/m²", true),
+        inst_row(&conn, "Highest UV index", "uv", "index", true),
+    ];
+    cats.push(RecordCategory { name: "Solar".into(), rows: solar.into_iter().flatten().collect() });
+
+    Ok(cats)
+}

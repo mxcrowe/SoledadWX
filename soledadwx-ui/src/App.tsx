@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import Console from "./Console";
+import Records from "./Records";
 import "./App.css";
 
 export interface WeatherReading {
@@ -195,7 +196,7 @@ const NAV: [View, string, string][] = [
   ["extremes", "Soledad Extremes", "⇅"],
 ];
 
-const BUILT: View[] = ["console", "live", "analyst"];
+const BUILT: View[] = ["console", "live", "analyst", "records"];
 
 function Placeholder({ label }: { label: string }) {
   return (
@@ -259,6 +260,7 @@ function App() {
       <main className="content">
       {view === "console" && <Console reading={reading} />}
       {view === "analyst" && <Analyst />}
+      {view === "records" && <Records />}
       {!BUILT.includes(view) && <Placeholder label={NAV.find((n) => n[0] === view)![1]} />}
 
       {view === "live" && (reading ? (

@@ -293,3 +293,22 @@ p {
 }
 .placeholder-glyph { font-size: 3rem; opacity: 0.5; }
 .placeholder h2 { margin: 0; font-weight: 600; }
+
+/* ---------- Records page ---------- */
+.records { max-width: 900px; margin: 0 auto; }
+.page-title { margin: 0.2rem 0 0.1rem; font-size: 1.6rem; }
+.page-sub { color: #888; margin: 0 0 1.2rem; }
+.rec-tabs { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.rec-tab {
+  padding: 0.45rem 1.1rem; border-radius: 8px; cursor: pointer;
+  border: 1px solid rgba(128,128,128,0.3); background: transparent;
+  color: inherit; font-size: 0.95rem; opacity: 0.8;
+}
+.rec-tab:hover { opacity: 1; }
+.rec-tab.active { background: rgba(100,148,237,0.22); border-color: cornflowerblue; opacity: 1; font-weight: 600; }
+.rec-table { width: 100%; border-collapse: collapse; }
+.rec-table td { padding: 0.55rem 0.4rem; border-bottom: 1px solid rgba(128,128,128,0.15); }
+.rec-label { opacity: 0.85; }
+.rec-value { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; font-size: 1.1rem; }
+.rec-unit { font-size: 0.8rem; opacity: 0.6; font-weight: 400; }
+.rec-when { text-align: right; color: #9fb4e8; font-size: 0.9rem; white-space: nowrap; }
