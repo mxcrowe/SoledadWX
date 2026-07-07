@@ -13,12 +13,12 @@ decade-plus deeper than a typical MXUI site, which matters for Records/Extremes/
 | 3 | **Today/Yesterday** | ⏳ planned | All parameters, two-column today-vs-yesterday with hi/lo + times. Fixed 2-day compare | Beaumaris |
 | 4 | **Micro-forecast** | ⏳ Phase 5 | Hyperlocal AI forecast: NWS regional signal + 17yr archive → LLM bias-corrects to the Mt Soledad microclimate. Needs a synoptic feed (NWS gridpoint) first | the "Oracle" |
 | 5 | **Charts** | ⏳ deferred | Interactive time-series, four modes: Recent, Recent SelectaChart, Historic, Climate | Beaumaris (does this superbly) |
-| 6 | **Records** | ⏳ planned | **All-time** hall of fame: single highest/lowest *ever* per parameter with date/time, tabbed by category (Temp/Wind/Rain/Humidity/Pressure). Static | Cumulus "All Time Records" (Cumulus UI Examples/…10_50_15…png) |
-| 7 | **Synopsis** | ⏳ planned · **placement TBD** | Per-period **report card**: fixed output, a View selector picks the range (This Month / This Year / This Period custom). Means (1-min, min+max, mean-min/max), extremes w/ days, rain days / dry days, wind run, sunshine hours | Cumulus "Averages and Extremes for [period]" (…10_49_53…png) |
-| 8 | **Analyst** | ⏳ design TBD | **NEW capability, not in Cumulus.** Comparison workbench: compare dates/periods/records over time (July 2010 vs July 2020; this-day-in-history across 17 yrs; decade-over-decade drift). Replaces the user's old by-hand value-copying | own idea |
+| 6 | **Min/Max Records** | ⏳ planned | **All-time** hall of fame: single highest/lowest *ever* per parameter with date/time, tabbed by category (Temp/Wind/Rain/Humidity/Pressure). Static | Cumulus "All Time Records" (Cumulus UI Examples/…10_50_15…png) |
+| 7 | **Synopsis by Period** | ⏳ planned | Per-period **report card**: fixed output, a View selector picks the range (This Month / This Year / This Period custom). Means (1-min, min+max, mean-min/max), extremes w/ days, rain days / dry days, wind run, sunshine hours | Cumulus "Averages and Extremes for [period]" (…10_49_53…png) |
+| 8 | **Analyze & Compare** | ⏳ design TBD | **NEW capability, not in Cumulus.** Comparison workbench: compare dates/periods/records over time (July 2010 vs July 2020; this-day-in-history across 17 yrs; decade-over-decade drift). Replaces the user's old by-hand value-copying. (Nav item currently points at the Analyst-v1 plotter as a stand-in) | own idea |
 | 9 | **Gauges** | ⏳ deferred toy | Full-page SteelSeries steam-gauge instrument panel — the ambient "fish tank" | CustomGauges.png |
 | 10 | **Barograph** | ⏳ deferred toy | Bermuda rotating-drum barograph, ink trace of recent pressure; brass/glass via AI textures + SVG | uncle's barograph |
-| 11 | **Extremes** | ⏳ planned | **Current-period** bests: this-month / this-year highest-lowest per parameter with dates, live-updating. Distinct from Records' all-time statics | Beaumaris extremes.php |
+| 11 | **Soledad Extremes** | ⏳ planned | **Current-period** bests: this-month / this-year highest-lowest per parameter with dates, live-updating. Distinct from Records' all-time statics | Beaumaris extremes.php |
 
 ## Key distinctions (locked)
 
@@ -27,8 +27,9 @@ decade-plus deeper than a typical MXUI site, which matters for Records/Extremes/
 - **Charts vs Synopsis/Analyst** — Charts = *see* it (visual plots). Synopsis/Analyst = *tabulate/compare* it (numbers).
 - **Note:** the current "Analyst" nav item points at the interactive plotter built in Analyst v1 — that code is really a **proto-Charts** and will migrate to the Charts surface. The real Analyst gets built fresh.
 
-## OPEN QUESTION
-Synopsis is not yet in the nav rail (user's list has Analyst but not Synopsis, while describing them as separate). Decide: **own rail item**, or the landing view of Analyst?
+## Resolved
+Synopsis has its own rail item ("Synopsis by Period"), placed directly above
+"Analyze & Compare". The two are distinct surfaces.
 
 ## Data foundation (already built — everything below reads these)
 - `observations` — 17.1M rows, source-tagged, canonical priority resolver (`canonical_observations` view)

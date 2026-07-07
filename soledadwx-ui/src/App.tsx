@@ -179,7 +179,7 @@ function Analyst() {
 
 type View =
   | "console" | "live" | "today" | "microforecast" | "charts"
-  | "records" | "analyst" | "gauges" | "barograph" | "extremes";
+  | "records" | "synopsis" | "analyst" | "gauges" | "barograph" | "extremes";
 
 const NAV: [View, string, string][] = [
   ["console", "Console", "▦"],
@@ -187,11 +187,12 @@ const NAV: [View, string, string][] = [
   ["today", "Today/Yesterday", "⇄"],
   ["microforecast", "Micro-forecast", "☁"],
   ["charts", "Charts", "∿"],
-  ["records", "Records", "★"],
-  ["analyst", "Analyst", "⌕"],
+  ["records", "Min/Max Records", "★"],
+  ["synopsis", "Synopsis by Period", "▤"],
+  ["analyst", "Analyze & Compare", "⌕"],
   ["gauges", "Gauges", "◎"],
   ["barograph", "Barograph", "◠"],
-  ["extremes", "Extremes", "⇅"],
+  ["extremes", "Soledad Extremes", "⇅"],
 ];
 
 const BUILT: View[] = ["console", "live", "analyst"];
