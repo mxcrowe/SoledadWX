@@ -162,6 +162,14 @@ SOURCES = [
      "Legacy/MSDSD-Rescue", "10 min",
      "Temp/dewpoint/RH/wind only; no rain/solar/pressure. Synoptic API "
      "history is paywalled; free tier = rolling week."),
+    ("wu_ksandi354", "Weather Underground PWS KCASANDI354", "Neighbor (~1.1 km)",
+     "Legacy/WU-Neighbors/KCASANDI354", "5 min",
+     "Nearby La Jolla PWS, same microclimate. Gap-fill only (2016 outage). "
+     "Full parameter set. Ranked below all on-site sources."),
+    ("wu_ksandi4366", "Weather Underground PWS KCASANDI4366", "Neighbor (~1.2 km)",
+     "Legacy/WU-Neighbors/KCASANDI4366", "5 min",
+     "Nearby La Jolla PWS, same microclimate. Gap-fill only (2018 July "
+     "outage + Aug-Sep instrument swap). Full parameter set."),
 ]
 
 # Priority map from ARCHITECTURE.md §3.3. Epochs computed in ensure_schema().
@@ -171,15 +179,18 @@ SOURCES = [
 # end (checked Jul 2026, empty); msdsd is off-site fallback for the one true
 # instrument gap (~Aug 28 - Sep 27, 2018).
 PRIORITY = [
-    ("2009-09-01", "2018-09-01", "cumulus_log", 1),
-    ("2012-11-29", "2018-09-01", "wu_pws",      2),
-    ("2018-09-01", "2020-04-19", "wu_pws",      1),
-    ("2018-09-01", "2020-04-19", "msdsd",       2),
-    ("2020-04-19", "2025-08-17", "mdb",         1),
-    ("2020-04-19", "2025-08-17", "amb_rest",    2),
-    ("2020-04-19", "2025-08-17", "wu_pws",      3),
-    ("2025-08-17", None,         "amb_rest",    1),
-    ("2025-08-17", None,         "amb_ws",      2),
+    ("2009-09-01", "2018-09-01", "cumulus_log",   1),
+    ("2012-11-29", "2018-09-01", "wu_pws",        2),
+    ("2009-09-01", "2018-09-01", "wu_ksandi354",  8),
+    ("2009-09-01", "2018-09-01", "wu_ksandi4366", 9),
+    ("2018-09-01", "2020-04-19", "wu_pws",        1),
+    ("2018-09-01", "2020-04-19", "wu_ksandi4366", 8),
+    ("2018-09-01", "2020-04-19", "msdsd",         9),
+    ("2020-04-19", "2025-08-17", "mdb",           1),
+    ("2020-04-19", "2025-08-17", "amb_rest",      2),
+    ("2020-04-19", "2025-08-17", "wu_pws",        3),
+    ("2025-08-17", None,         "amb_rest",      1),
+    ("2025-08-17", None,         "amb_ws",        2),
 ]
 
 

@@ -25,7 +25,8 @@ The archive holds **16.8M observations spanning Sep 2009 → present**, assemble
 | SQLite archive (11.7M observations, 2009→present) | ✅ Built + validated — see `data/DATA_REPORT.md` |
 | Historical importers (Cumulus, MDB, Ambient) | ✅ Complete, idempotent, unit-verified |
 | Canonical resolver + resampler | ✅ Working (`scripts/wxquery.py`) |
-| WU KCALAJOL6 gap-fill (same roof, 2012-2025) | ✅ Complete — 1,596 missing days reduced to 158 (station-dark periods only) |
+| WU KCALAJOL6 gap-fill (same roof, 2012-2025) | ✅ Complete — 1,596 days reduced to 158 |
+| Neighbor PWS gap-fill (~1 km, KCASANDI354/4366) | ✅ 2016 + 2018 gaps filled; 158 → 93 days remaining |
 | Desktop app (release exe + shortcut) | ✅ Built — `SoledadWX.lnk` on desktop; MSI/NSIS installers in target/release/bundle |
 | WS-1002 SD card | ❌ Dead end — card checked, no data |
 | Photorealistic gauge UI | ⏳ Phase 1 |

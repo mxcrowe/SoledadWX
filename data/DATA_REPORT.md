@@ -1,6 +1,6 @@
 # SoledadWX Data Archive — Validation Report
 
-Generated 2026-07-07 16:16 UTC by `scripts/validate.py` against `data/soledadwx.db`.
+Generated 2026-07-07 16:40 UTC by `scripts/validate.py` against `data/soledadwx.db`.
 
 ## 1. Source inventory
 
@@ -9,17 +9,19 @@ Generated 2026-07-07 16:16 UTC by `scripts/validate.py` against `data/soledadwx.
 | `cumulus_log` | 4,528,534 | 290,361 | 2009-09-06 21:57 | 2018-08-28 04:15 |
 | `mdb` | 5,292,888 | 294,464 | 2020-04-20 01:45 | 2025-08-16 22:11 |
 | `amb_rest` | 1,942,752 | 93,125 | 2025-08-16 14:16 | 2026-07-06 15:55 |
-| `amb_ws` | 4,053 | 193 | 2026-07-06 16:31 | 2026-07-06 22:43 |
+| `amb_ws` | 4,431 | 211 | 2026-07-06 16:31 | 2026-07-07 16:38 |
 | `ksan_metar` | — | — | — | — |
 | `sdcard` | — | — | — | — |
 | `wu_pws` | 5,067,374 | 389,882 | 2014-06-13 06:01 | 2025-01-01 07:59 |
 | `msdsd` | — | — | — | — |
+| `wu_ksandi354` | 96,087 | 8,736 | 2016-05-23 07:02 | 2016-06-25 06:56 |
+| `wu_ksandi4366` | 86,721 | 6,672 | 2018-07-07 07:04 | 2018-09-29 06:54 |
 
-**Total observations: 16,835,601** across all sources, plus 3,205 daily summaries (Cumulus era, incl. wind run).
+**Total observations: 17,018,787** across all sources, plus 3,205 daily summaries (Cumulus era, incl. wind run).
 
 ## 2. Coverage gaps (canonical `tempf`, holes > 6 h)
 
-Canonical tempf timestamps: 1,067,665 (2009-09-06 21:57 -> 2026-07-06 22:43)
+Canonical tempf timestamps: 1,083,047 (2009-09-06 21:57 -> 2026-07-07 16:38)
 
 | Gap start (UTC) | Gap end (UTC) | Duration |
 |---|---|---|
@@ -27,10 +29,12 @@ Canonical tempf timestamps: 1,067,665 (2009-09-06 21:57 -> 2026-07-06 22:43)
 | 2011-09-10 06:15 | 2011-09-10 16:15 | 10.0 h |
 | 2013-07-04 14:07 | 2013-07-04 21:21 | 7.2 h |
 | 2014-05-12 03:45 | 2014-06-13 06:01 | 32.1 d |
-| 2016-05-24 00:00 | 2016-06-23 10:14 | 30.4 d |
-| 2018-07-08 19:45 | 2018-07-16 11:46 | 7.7 d |
-| 2018-08-28 04:15 | 2018-09-27 21:59 | 30.7 d |
-| 2018-09-28 19:14 | 2018-09-29 01:44 | 6.5 h |
+| 2018-07-13 19:24 | 2018-07-14 17:34 | 22.2 h |
+| 2018-09-02 20:09 | 2018-09-03 03:19 | 7.2 h |
+| 2018-09-03 03:54 | 2018-09-03 10:34 | 6.7 h |
+| 2018-09-10 16:54 | 2018-09-11 03:09 | 10.2 h |
+| 2018-09-11 18:49 | 2018-09-12 02:19 | 7.5 h |
+| 2018-09-27 00:54 | 2018-09-27 07:49 | 6.9 h |
 | 2018-09-30 06:59 | 2018-10-01 07:09 | 1.0 d |
 | 2018-10-02 19:59 | 2018-10-03 02:19 | 6.3 h |
 | 2018-10-03 15:24 | 2018-10-03 21:24 | 6.0 h |
@@ -91,8 +95,9 @@ Canonical tempf timestamps: 1,067,665 (2009-09-06 21:57 -> 2026-07-06 22:43)
 | 2024-12-19 06:09 | 2024-12-19 12:14 | 6.1 h |
 | 2024-12-20 09:39 | 2024-12-20 16:34 | 6.9 h |
 | 2026-02-04 08:35 | 2026-02-05 16:05 | 1.3 d |
+| 2026-07-06 22:43 | 2026-07-07 16:21 | 17.6 h |
 
-**68 gaps, 158 days total missing.**
+**71 gaps, 93 days total missing.**
 
 ## 3. Overlap-zone cross-validation (2025-08-16, MDB vs Ambient)
 
@@ -119,7 +124,7 @@ Note: the two sources log on offset clocks (MDB at :01/:06, Ambient at :00/:05),
 | windspeedmph | 0.00 | 39.60 | mph | yes |
 | windgustmph | 0.00 | 59.90 | mph | yes |
 | dailyrainin | 0.00 | 3.43 | in | yes |
-| solarradiation | 0.00 | 1082.20 | W/m2 | yes |
+| solarradiation | 0.00 | 1296.60 | W/m2 | REVIEW |
 | uv | 0.00 | 13.00 | index | yes |
 
 ## 5. All-time extremes (canonical archive)
