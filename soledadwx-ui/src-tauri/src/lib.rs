@@ -164,7 +164,13 @@ fn start_weather_listener(app_handle: AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            println!("Starting SoledadWX pure websocket backend...");
+            println!("Starting SoledadWX backend...");
+            // Catch the archive up from the cloud for any time the app wasn't
+            // running, concurrently with starting the live stream.
+            let bf_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                db::backfill(bf_handle).await;
+            });
             start_weather_listener(app.handle().clone());
             Ok(())
         })

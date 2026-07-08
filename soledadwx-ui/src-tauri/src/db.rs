@@ -45,6 +45,34 @@ pub fn db_path() -> PathBuf {
     PathBuf::from("../../data/soledadwx.db")
 }
 
+// Canonical metric name -> value for one reading. Shared by the live
+// recorder and the backfill so both map fields identically.
+fn value_pairs(r: &AmbientReading) -> [(&'static str, Option<f64>); 21] {
+    [
+        ("tempf", r.tempf),
+        ("humidity", r.humidity.map(f64::from)),
+        ("tempinf", r.tempinf),
+        ("humidityin", r.humidityin.map(f64::from)),
+        ("windspeedmph", r.windspeedmph),
+        ("windgustmph", r.windgustmph),
+        ("maxdailygust", r.maxdailygust),
+        ("winddir", r.winddir.map(f64::from)),
+        ("baromrelin", r.baromrelin),
+        ("baromabsin", r.baromabsin),
+        ("hourlyrainin", r.hourlyrainin),
+        ("dailyrainin", r.dailyrainin),
+        ("weeklyrainin", r.weeklyrainin),
+        ("monthlyrainin", r.monthlyrainin),
+        ("yearlyrainin", r.yearlyrainin),
+        ("solarradiation", r.solarradiation),
+        ("uv", r.uv.map(f64::from)),
+        ("dewpointf", r.dewPoint),
+        ("feelslikef", r.feelsLike),
+        ("dewpointinf", r.dewPointin),
+        ("feelslikeinf", r.feelsLikein),
+    ]
+}
+
 pub struct Recorder {
     conn: Connection,
     source_id: i64,
@@ -60,6 +88,7 @@ impl Recorder {
         let conn = Connection::open(&path)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         conn.execute_batch(SCHEMA)?;
         conn.execute(
             "INSERT OR IGNORE INTO sources(kind, name, station, path_or_url, sample_rate, notes)
@@ -111,29 +140,7 @@ impl Recorder {
     /// Persist one reading. Returns number of metric rows written.
     pub fn record(&mut self, r: &AmbientReading) -> Result<usize, rusqlite::Error> {
         let ts_utc = r.dateutc / 1000;
-        let values: [(&str, Option<f64>); 21] = [
-            ("tempf", r.tempf),
-            ("humidity", r.humidity.map(f64::from)),
-            ("tempinf", r.tempinf),
-            ("humidityin", r.humidityin.map(f64::from)),
-            ("windspeedmph", r.windspeedmph),
-            ("windgustmph", r.windgustmph),
-            ("maxdailygust", r.maxdailygust),
-            ("winddir", r.winddir.map(f64::from)),
-            ("baromrelin", r.baromrelin),
-            ("baromabsin", r.baromabsin),
-            ("hourlyrainin", r.hourlyrainin),
-            ("dailyrainin", r.dailyrainin),
-            ("weeklyrainin", r.weeklyrainin),
-            ("monthlyrainin", r.monthlyrainin),
-            ("yearlyrainin", r.yearlyrainin),
-            ("solarradiation", r.solarradiation),
-            ("uv", r.uv.map(f64::from)),
-            ("dewpointf", r.dewPoint),
-            ("feelslikef", r.feelsLike),
-            ("dewpointinf", r.dewPointin),
-            ("feelslikeinf", r.feelsLikein),
-        ];
+        let values = value_pairs(r);
         let tx = self.conn.transaction()?;
         let mut n = 0;
         {
@@ -669,4 +676,148 @@ pub fn records() -> Result<Vec<RecordCategory>, rusqlite::Error> {
     cats.push(RecordCategory { name: "Solar".into(), rows: solar.into_iter().flatten().collect() });
 
     Ok(cats)
+}
+
+// ---------- Auto-backfill on launch ----------
+//
+// The station uploads to AmbientWeather's cloud 24/7 regardless of whether
+// this PC is running. On launch we pull any readings the cloud captured
+// since our last recorded observation and insert them as `amb_rest`, so the
+// archive stays complete no matter how intermittently the app runs. (Gaps
+// where the station itself couldn't reach the cloud — e.g. a home internet
+// outage — are a separate concern, filled from a neighbor station.)
+//
+// Progress is emitted to the frontend as "backfill" events for the nav
+// footer indicator. Inserts land in `observations`; daily_rollups refresh on
+// the next Python rebuild (the live pages read observations directly).
+
+use tauri::{AppHandle, Emitter};
+
+const AMBIENT_API_BASE: &str = "https://rt.ambientweather.net/v1";
+
+fn last_cloud_ts(conn: &Connection) -> Option<i64> {
+    conn.query_row(
+        "SELECT MAX(ts_utc) FROM observations
+         WHERE source_id IN (SELECT id FROM sources WHERE kind IN ('amb_rest','amb_ws'))",
+        [], |r| r.get(0),
+    ).ok().flatten()
+}
+
+pub async fn backfill(app: AppHandle) {
+    dotenvy::dotenv().ok();
+    let api_key = match std::env::var("AMBIENT_API_KEY") { Ok(k) => k, Err(_) => return };
+    let app_key = match std::env::var("AMBIENT_APP_KEY") { Ok(k) => k, Err(_) => return };
+
+    // Where does our archive currently end?
+    let last_ts = {
+        let conn = match Connection::open(db_path()) { Ok(c) => c, Err(_) => return };
+        last_cloud_ts(&conn)
+    };
+    let last_ts = match last_ts {
+        Some(t) => t,
+        None => return, // empty DB: use the Python rescue, not launch backfill
+    };
+    let now = chrono::Utc::now().timestamp();
+    if now - last_ts < 600 {
+        return; // less than 10 min behind — nothing worth fetching
+    }
+    let last_ts_ms = last_ts * 1000;
+
+    let client = reqwest::Client::builder()
+        .user_agent("SoledadWX/1.0")
+        .build()
+        .unwrap_or_default();
+
+    // Resolve the device MAC.
+    let dev_url = format!("{AMBIENT_API_BASE}/devices?applicationKey={app_key}&apiKey={api_key}");
+    let mac: String = match client.get(&dev_url).send().await.and_then(|r| r.error_for_status()) {
+        Ok(resp) => match resp.json::<serde_json::Value>().await {
+            Ok(v) => match v.get(0).and_then(|d| d["macAddress"].as_str()) {
+                Some(m) => m.to_string(),
+                None => return,
+            },
+            Err(_) => return,
+        },
+        Err(e) => { println!("Backfill: device list failed: {e}"); return; }
+    };
+    let mac_enc = mac.replace(':', "%3A");
+
+    println!("Backfill: archive ends {}s ago; catching up from the cloud…", now - last_ts);
+    let _ = app.emit("backfill", serde_json::json!({ "active": true, "done": 0 }));
+
+    // Ambient allows <= 1 req/sec per key; the device call just fired.
+    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+
+    let mut end_date: Option<i64> = None;
+    let mut done = 0usize;
+    let mut pages = 0;
+    loop {
+        if pages > 400 { break; } // safety
+        let mut url = format!(
+            "{AMBIENT_API_BASE}/devices/{mac_enc}?applicationKey={app_key}&apiKey={api_key}&limit=288"
+        );
+        if let Some(ed) = end_date {
+            url.push_str(&format!("&endDate={ed}"));
+        }
+
+        // Fetch with backoff — 429s clear once we slow below 1 req/sec.
+        let mut fetched: Option<Vec<AmbientReading>> = None;
+        for attempt in 0..4u64 {
+            match client.get(&url).send().await.and_then(|r| r.error_for_status()) {
+                Ok(resp) => match resp.json::<Vec<AmbientReading>>().await {
+                    Ok(p) => { fetched = Some(p); break; }
+                    Err(e) => { println!("Backfill: parse failed: {e}"); break; }
+                },
+                Err(e) => {
+                    println!("Backfill: fetch attempt {} failed ({e}); backing off", attempt + 1);
+                    tokio::time::sleep(std::time::Duration::from_secs(2 * (attempt + 1))).await;
+                }
+            }
+        }
+        let page = match fetched { Some(p) => p, None => break };
+        if page.is_empty() { break; }
+
+        // Records are newest-first. Insert everything strictly newer than our
+        // archive end; stop once the page reaches back past it.
+        let oldest_ms = page.last().map(|r| r.dateutc).unwrap_or(last_ts_ms);
+        if let Ok(conn) = Connection::open(db_path()) {
+            let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
+            let sid: Option<i64> = conn
+                .query_row("SELECT id FROM sources WHERE kind='amb_rest'", [], |r| r.get(0))
+                .ok();
+            if let Some(sid) = sid {
+                let mids: HashMap<String, i64> = conn
+                    .prepare("SELECT name, id FROM metrics").ok()
+                    .and_then(|mut s| {
+                        s.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+                            .ok()
+                            .map(|rows| rows.flatten().collect())
+                    })
+                    .unwrap_or_default();
+                for reading in &page {
+                    if reading.dateutc <= last_ts_ms { continue; }
+                    let ts = reading.dateutc / 1000;
+                    for (name, val) in value_pairs(reading) {
+                        if let (Some(v), Some(&mid)) = (val, mids.get(name)) {
+                            let _ = conn.execute(
+                                "INSERT OR IGNORE INTO observations(metric_id, ts_utc, source_id, value)
+                                 VALUES (?1, ?2, ?3, ?4)",
+                                rusqlite::params![mid, ts, sid, v],
+                            );
+                            done += 1;
+                        }
+                    }
+                }
+            }
+        }
+        let _ = app.emit("backfill", serde_json::json!({ "active": true, "done": done }));
+        pages += 1;
+
+        if oldest_ms <= last_ts_ms { break; }
+        end_date = Some(oldest_ms - 1);
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    }
+
+    println!("Backfill: done, {done} metric-values inserted across {pages} pages.");
+    let _ = app.emit("backfill", serde_json::json!({ "active": false, "done": done }));
 }

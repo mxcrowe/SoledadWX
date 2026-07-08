@@ -217,13 +217,21 @@ function App() {
   const [reading, setReading] = useState<WeatherReading | null>(null);
   const [status, setStatus] = useState<DbStatus | null>(null);
   const [view, setView] = useState<View>("console");
-  // Pre-wired for auto-backfill-on-launch: shows a footer indicator while a
-  // cloud catch-up is running. Dormant (null) until that feature lands.
-  const [backfill] = useState<{ done: number } | null>(null);
+  // Footer indicator while the launch cloud-catch-up runs (see db::backfill).
+  const [backfill, setBackfill] = useState<{ done: number } | null>(null);
 
   useEffect(() => {
     const unlisten = listen<WeatherReading>("weather-reading", (event) => {
       setReading(event.payload);
+    });
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, []);
+
+  useEffect(() => {
+    const unlisten = listen<{ active: boolean; done: number }>("backfill", (e) => {
+      setBackfill(e.payload.active ? { done: e.payload.done } : null);
     });
     return () => {
       unlisten.then((f) => f());
