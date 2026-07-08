@@ -29,6 +29,11 @@ function SteelElement({ tag, options, live }: {
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const elRef = useRef<GaugeEl | null>(null);
+  // Options are baked into the gauge's static background buffer at creation, so
+  // any change to them requires rebuilding the element. Key on their value
+  // (not identity — the object is fresh each render) so live prop updates,
+  // which flow through the effect below, don't trigger a rebuild.
+  const optionsKey = JSON.stringify(options);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -40,8 +45,8 @@ function SteelElement({ tag, options, live }: {
       el.remove();
       elRef.current = null;
     };
-    // Recreate only if the tag itself changes; options are creation-time.
-  }, [tag]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tag, optionsKey]);
 
   useEffect(() => {
     const el = elRef.current;
@@ -97,7 +102,7 @@ export function SteelWindDir({
       options={{
         ...HOUSE,
         size,
-        titleString: "Wind Dir.",
+        titleString: "",
         pointerColorAverage: "WHITE",
       }}
       live={{ valueLatest: latest, valueAverage: average }}

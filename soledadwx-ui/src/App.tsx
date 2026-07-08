@@ -276,6 +276,10 @@ function App() {
             {lastWriteAge != null && <span className="nf-dim">{fmtAge(lastWriteAge)}</span>}
           </div>
 
+          <div className="nf-line nf-rate">
+            <span className="nf-dim">Update rate 60s</span>
+          </div>
+
           {backfill && (
             <div className="nf-line nf-backfill">
               <span className="rec-dot spin">◐</span>
@@ -285,10 +289,12 @@ function App() {
 
           {status && (
             <div className="nf-line nf-archive">
-              <span className="nf-dim">
-                {status.total_observations.toLocaleString()} obs
-                {status.archive_start && ` · since ${status.archive_start.slice(0, 4)}`}
-              </span>
+              <span className="nf-dim">{status.total_observations.toLocaleString()} obs</span>
+            </div>
+          )}
+          {status?.archive_start && (
+            <div className="nf-line nf-archive">
+              <span className="nf-dim">Since {status.archive_start.slice(0, 4)}</span>
             </div>
           )}
         </div>

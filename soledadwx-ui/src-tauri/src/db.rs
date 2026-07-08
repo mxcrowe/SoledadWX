@@ -368,6 +368,7 @@ pub struct DayExtremes {
 pub struct ConsoleStats {
     pub temp_trend_f_hr: Option<f64>,
     pub press_trend_in_hr: Option<f64>,
+    pub humidity_trend_pct_hr: Option<f64>,
     pub avg_temp_today: Option<f64>,
     pub wind_run_today_mi: Option<f64>,
     pub rain_yesterday_in: Option<f64>,
@@ -474,6 +475,7 @@ pub fn console_stats() -> Result<ConsoleStats, rusqlite::Error> {
     Ok(ConsoleStats {
         temp_trend_f_hr: trend_per_hour(&conn, "tempf", now),
         press_trend_in_hr: trend_per_hour(&conn, "baromrelin", now),
+        humidity_trend_pct_hr: trend_per_hour(&conn, "humidity", now),
         avg_temp_today,
         wind_run_today_mi,
         rain_yesterday_in,

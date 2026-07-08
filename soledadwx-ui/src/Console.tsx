@@ -5,7 +5,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { astro, cardinal, cloudBaseFt, fmtDur, fmtHM } from "./astro";
+import { astro, cardinal, cloudBaseFt, fmtDur, fmtHM, heatIndexF, skyState, windChillF } from "./astro";
 import { SteelRadial, SteelWindDir } from "./SteelGauge";
 import type { WeatherReading } from "./App";
 
@@ -19,6 +19,7 @@ interface DayExtremes {
 interface ConsoleStats {
   temp_trend_f_hr: number | null;
   press_trend_in_hr: number | null;
+  humidity_trend_pct_hr: number | null;
   avg_temp_today: number | null;
   wind_run_today_mi: number | null;
   rain_yesterday_in: number | null;
@@ -31,6 +32,8 @@ interface WindRoseData { counts: number[][]; total: number; calm: number; hours:
 interface SeriesPoint { t: number; avg: number; min: number; max: number; n: number }
 
 const fmt = (v: number | null | undefined, dp = 1) => (v == null ? "--" : v.toFixed(dp));
+// Apparent-temp values are undefined outside their valid range — say so plainly.
+const fmtApparent = (v: number | null) => (v == null ? "N/A" : `${v.toFixed(0)} °F`);
 const fmtT = (ts: number | null) =>
   ts ? new Date(ts * 1000).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }) : "--:--";
 
@@ -164,7 +167,21 @@ function WindRose({ data }: { data: WindRoseData | null }) {
 
 // ---------- conditions sentence ----------
 
-function conditions(r: WeatherReading | null, s: ConsoleStats | null): string {
+// Rolling window over which solar flux is smoothed for the cloudiness estimate.
+// At the station's ~60 s report cadence this is only a couple of samples —
+// bump to 5 if a broken-cloud sky still makes the readout flicker.
+const SKY_WINDOW_MIN = 2;
+const SKY_WINDOW_MS = SKY_WINDOW_MIN * 60_000;
+
+// Window for the vector-averaged wind direction (the gauge's white "Average"
+// pointer vs. the red "Latest"). 10 min is a common met-station convention.
+const WIND_AVG_MIN = 10;
+const WIND_AVG_MS = WIND_AVG_MIN * 60_000;
+
+function conditions(
+  r: WeatherReading | null, s: ConsoleStats | null, now: Date,
+  solarWm2: number | null,
+): string {
   if (!r) return "Waiting for station data…";
   const parts: string[] = [];
   const w = r.windspeedmph ?? 0;
@@ -174,6 +191,11 @@ function conditions(r: WeatherReading | null, s: ConsoleStats | null): string {
     w < 16 ? `Breezy from the ${cardinal(r.winddir ?? 0)}` :
     `Windy from the ${cardinal(r.winddir ?? 0)}`
   );
+  // Cloudiness from measured-vs-clear-sky solar flux, median-smoothed over the
+  // window (daytime only; skyState returns unusable when the sun is too low).
+  const sky = skyState(now, solarWm2);
+  if (sky.usable)
+    parts.push(`${sky.label} (~${Math.round(sky.fraction * 100)}% cloud, ${SKY_WINDOW_MIN} min)`);
   const tt = s?.temp_trend_f_hr;
   if (tt != null)
     parts.push(Math.abs(tt) < 0.5 ? "temperature steady" : tt > 0 ? "temperature rising" : "temperature falling");
@@ -201,6 +223,10 @@ export default function Console({ reading }: { reading: WeatherReading | null })
   const [rose, setRose] = useState<WindRoseData | null>(null);
   const [sparks, setSparks] = useState<Record<string, SeriesPoint[]>>({});
   const [clock, setClock] = useState(new Date());
+  // Rolling buffer of recent solar readings for median-smoothed cloudiness.
+  const [solarBuf, setSolarBuf] = useState<{ id: number; t: number; v: number }[]>([]);
+  // Rolling buffer of wind (dir + speed) for a vector-averaged direction.
+  const [windBuf, setWindBuf] = useState<{ id: number; t: number; dir: number; spd: number }[]>([]);
 
   useEffect(() => {
     const poll = () => invoke<ConsoleStats>("console_stats").then(setStats).catch(() => {});
@@ -224,9 +250,59 @@ export default function Console({ reading }: { reading: WeatherReading | null })
     return () => clearInterval(id);
   }, []);
 
+  // Append each new solar reading to the window buffer, pruning by wall clock
+  // (dateutc dedupes repeat renders of the same reading).
+  useEffect(() => {
+    const v = reading?.solarradiation;
+    if (v == null) return;
+    const id = reading?.dateutc ?? Date.now();
+    setSolarBuf(prev => {
+      if (prev.length && prev[prev.length - 1].id === id) return prev;
+      const now = Date.now();
+      return [...prev, { id, t: now, v }].filter(p => p.t >= now - SKY_WINDOW_MS);
+    });
+  }, [reading]);
+
+  // Same idea for wind direction, over WIND_AVG_MIN.
+  useEffect(() => {
+    const dir = reading?.winddir;
+    if (dir == null) return;
+    const spd = reading?.windspeedmph ?? 0;
+    const id = reading?.dateutc ?? Date.now();
+    setWindBuf(prev => {
+      if (prev.length && prev[prev.length - 1].id === id) return prev;
+      const now = Date.now();
+      return [...prev, { id, t: now, dir, spd }].filter(p => p.t >= now - WIND_AVG_MS);
+    });
+  }, [reading]);
+
   const a = useMemo(() => astro(clock), [clock.getMinutes()]);
   const r = reading;
   const s = stats;
+
+  // Median solar flux over the window; falls back to the latest reading until
+  // the buffer fills.
+  const smoothedSolar = useMemo(() => {
+    if (solarBuf.length === 0) return reading?.solarradiation ?? null;
+    const vs = solarBuf.map(p => p.v).sort((x, y) => x - y);
+    const m = vs.length >> 1;
+    return vs.length % 2 ? vs[m] : (vs[m - 1] + vs[m]) / 2;
+  }, [solarBuf, reading]);
+
+  // Speed-weighted vector-average wind direction (can't average degrees
+  // directly — 350° and 10° must average to 0°, not 180°). Sum unit vectors
+  // scaled by speed, then atan2 back to a compass bearing.
+  const avgWindDir = useMemo(() => {
+    if (windBuf.length === 0) return reading?.winddir ?? null;
+    let east = 0, north = 0;
+    for (const p of windBuf) {
+      const w = p.spd > 0 ? p.spd : 0.1; // tiny weight in calm so dir still counts
+      east += w * Math.sin((p.dir * Math.PI) / 180);
+      north += w * Math.cos((p.dir * Math.PI) / 180);
+    }
+    if (east === 0 && north === 0) return reading?.winddir ?? null;
+    return ((Math.atan2(east, north) * 180) / Math.PI + 360) % 360;
+  }, [windBuf, reading]);
 
   return (
     <div className="mx">
@@ -255,7 +331,7 @@ export default function Console({ reading }: { reading: WeatherReading | null })
       </div>
 
       <div className="mx-conditions">
-        <b>Current conditions:</b>&nbsp;{conditions(r, s)}
+        <b>Current conditions:</b>&nbsp;{conditions(r, s, clock, smoothedSolar)}
       </div>
 
       <div className="mx-grid">
@@ -267,18 +343,23 @@ export default function Console({ reading }: { reading: WeatherReading | null })
           <div className="hero">{fmt(r?.tempf)}<small>°F</small></div>
           <Trend value={s?.temp_trend_f_hr ?? null} unit="°F/hr" />
           <div className="sub">Avg today {fmt(s?.avg_temp_today)} °F · Inside {fmt(r?.tempinf)} °F</div>
+          <div className="pairline">
+            <span>Wind chill <b>{fmtApparent(windChillF(r?.tempf, r?.windspeedmph))}</b></span>
+            <span>Heat index <b>{fmtApparent(heatIndexF(r?.tempf, r?.humidity))}</b></span>
+          </div>
           {s && <HiLo unit="°F"
             today={{ hi: s.today.max_temp, lo: s.today.min_temp }}
             yesterday={{ hi: s.yesterday.max_temp, lo: s.yesterday.min_temp }} />}
         </Card>
 
         {/* 3 */}
-        <Card title="Apparent · Dew Point">
-          <div className="hero">{fmt(r?.feelsLike)}<small>°F</small></div>
-          <div className="sub">Feels like</div>
+        <Card title="Humidity · Dew Point">
+          <div className="hero">{fmt(r?.humidity, 0)}<small>%</small></div>
+          <Trend value={s?.humidity_trend_pct_hr ?? null} dp={1} unit="%/hr" />
+          <div className="sub">Outside humidity</div>
           <div className="pairline">
             <span>Dew point <b>{fmt(r?.dewPoint)} °F</b></span>
-            <span>Humidity <b>{fmt(r?.humidity, 0)} %</b></span>
+            <span>Feels like <b>{fmt(r?.feelsLike)} °F</b></span>
           </div>
           <div className="pairline">
             <span>Inside dew <b>{fmt(r?.dewPointin)} °F</b></span>
@@ -298,7 +379,7 @@ export default function Console({ reading }: { reading: WeatherReading | null })
         {/* 5 */}
         <Card title="Wind Speed"><SteelRadial value={r?.windspeedmph} title="Wind Speed" unit="mph" max={40} /></Card>
         {/* 6 */}
-        <Card title="Wind Direction"><SteelWindDir latest={r?.winddir} average={r?.winddir} /></Card>
+        <Card title="Wind Direction"><SteelWindDir latest={r?.winddir} average={avgWindDir} /></Card>
         {/* 7 */}
         <Card title="Wind Rose"><WindRose data={rose} /></Card>
 

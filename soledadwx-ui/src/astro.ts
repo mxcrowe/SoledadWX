@@ -60,12 +60,19 @@ export function astro(now = new Date()): AstroInfo {
   const sunset = sunEvent(now, false, 90.833);
   const dawn = sunEvent(now, true, 96);
   const dusk = sunEvent(now, false, 96);
-  const dayLengthMin =
-    sunrise && sunset ? (sunset.getTime() - sunrise.getTime()) / 60000 : 0;
+  // Each event is stamped onto its own day's UTC midnight, so sunset (which
+  // falls after 00:00 UTC here) can land a calendar day "before" sunrise and
+  // make the raw difference negative. Normalize into a single 0–24 h day.
+  const dayLen = (rise: Date | null, set: Date | null) => {
+    if (!rise || !set) return 0;
+    const m = (set.getTime() - rise.getTime()) / 60000;
+    return ((m % 1440) + 1440) % 1440;
+  };
+  const dayLengthMin = dayLen(sunrise, sunset);
   const tm = new Date(now.getTime() + 86400000);
   const r2 = sunEvent(tm, true, 90.833);
   const s2 = sunEvent(tm, false, 90.833);
-  const tomorrowLen = r2 && s2 ? (s2.getTime() - r2.getTime()) / 60000 : 0;
+  const tomorrowLen = dayLen(r2, s2);
 
   // Moon: synodic age from a known new moon (2000-01-06 18:14 UTC).
   const synodic = 29.530588853;
@@ -87,6 +94,87 @@ export function astro(now = new Date()): AstroInfo {
 /** Cloud base estimate (ft AGL) from temp/dewpoint spread in °F. */
 export const cloudBaseFt = (tempF: number, dewF: number) =>
   Math.max(0, Math.round(((tempF - dewF) / 4.4) * 1000));
+
+/** NWS wind chill (°F). Only defined for T ≤ 50 °F and wind > 3 mph; else null. */
+export function windChillF(tempF?: number, windMph?: number): number | null {
+  if (tempF == null || windMph == null || tempF > 50 || windMph <= 3) return null;
+  const v = Math.pow(windMph, 0.16);
+  return 35.74 + 0.6215 * tempF - 35.75 * v + 0.4275 * tempF * v;
+}
+
+/** NWS heat index (°F, Rothfusz regression). Only defined for T ≥ 80 °F; else null. */
+export function heatIndexF(tempF?: number, rh?: number): number | null {
+  if (tempF == null || rh == null || tempF < 80) return null;
+  const T = tempF, R = rh;
+  let hi =
+    -42.379 + 2.04901523 * T + 10.14333127 * R - 0.22475541 * T * R -
+    0.00683783 * T * T - 0.05481717 * R * R + 0.00122874 * T * T * R +
+    0.00085282 * T * R * R - 0.00000199 * T * T * R * R;
+  if (R < 13 && T <= 112) hi -= ((13 - R) / 4) * Math.sqrt((17 - Math.abs(T - 95)) / 17);
+  else if (R > 85 && T <= 87) hi += ((R - 85) / 10) * ((87 - T) / 5);
+  return hi;
+}
+
+const ELEV_M = 159; // station altitude (522 ft) for the air-mass term
+
+/** Sun's altitude above the horizon, degrees (NOAA approximation, ~0.5°). */
+export function solarAltitudeDeg(now = new Date()): number {
+  const yearStart = Date.UTC(now.getUTCFullYear(), 0, 0);
+  const dayMid = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const doy = Math.floor((dayMid - yearStart) / 86400000);
+  const utMin = now.getUTCHours() * 60 + now.getUTCMinutes() + now.getUTCSeconds() / 60;
+  const g = ((2 * Math.PI) / 365) * (doy - 1 + (utMin / 60 - 12) / 24);
+  const decl =
+    0.006918 - 0.399912 * Math.cos(g) + 0.070257 * Math.sin(g) -
+    0.006758 * Math.cos(2 * g) + 0.000907 * Math.sin(2 * g) -
+    0.002697 * Math.cos(3 * g) + 0.00148 * Math.sin(3 * g);
+  const eqtime =
+    229.18 * (0.000075 + 0.001868 * Math.cos(g) - 0.032077 * Math.sin(g) -
+      0.014615 * Math.cos(2 * g) - 0.040849 * Math.sin(2 * g));
+  const tst = utMin + eqtime + 4 * LON;   // true solar time (min)
+  const ha = rad(tst / 4 - 180);          // hour angle
+  const sinAlt =
+    Math.sin(rad(LAT)) * Math.sin(decl) +
+    Math.cos(rad(LAT)) * Math.cos(decl) * Math.cos(ha);
+  return deg(Math.asin(Math.max(-1, Math.min(1, sinAlt))));
+}
+
+/** Ryan–Stolzenbach clear-sky global horizontal irradiance, W/m². */
+export function clearSkyGHI(altitudeDeg: number): number {
+  if (altitudeDeg <= 0) return 0;
+  const sinAlt = Math.sin(rad(altitudeDeg));
+  const airMass =
+    Math.exp(-0.0001184 * ELEV_M) /
+    (sinAlt + 0.15 * Math.pow(altitudeDeg + 3.885, -1.253));
+  return 1368 * Math.pow(0.8, airMass) * sinAlt;
+}
+
+export interface SkyState { usable: boolean; fraction: number; label: string; clearGHI: number }
+
+// A genuinely clear day reaches only a fraction of the pure model (aerosols,
+// water vapour) AND less as the sensor's diffuser ages/fouls. Measured from
+// this station's own 2026 clear-day envelope (~0.83, down from ~0.98 in 2019 —
+// see solar_decay probe). Tunable; ultimately should auto-track the envelope.
+const CLEAR_FRACTION = 0.83;
+
+/** Estimate cloud cover by comparing measured solar flux to clear-sky model. */
+export function skyState(now: Date, solarWm2: number | null | undefined): SkyState {
+  const alt = solarAltitudeDeg(now);
+  const clear = clearSkyGHI(alt);
+  // Below ~7° sun the model and the sensor are both unreliable (long shadows,
+  // horizon obstructions), and at night solar tells us nothing about cloud.
+  if (alt < 7 || clear < 40 || solarWm2 == null) {
+    return { usable: false, fraction: 0, label: "", clearGHI: clear };
+  }
+  const ratio = solarWm2 / clear;
+  const fraction = Math.max(0, Math.min(1, 1 - ratio / CLEAR_FRACTION));
+  const label =
+    fraction < 0.15 ? "sky clear" :
+    fraction < 0.35 ? "mostly clear" :
+    fraction < 0.65 ? "partly cloudy" :
+    fraction < 0.88 ? "mostly cloudy" : "overcast";
+  return { usable: true, fraction, label, clearGHI: clear };
+}
 
 export const CARDINALS = [
   "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",

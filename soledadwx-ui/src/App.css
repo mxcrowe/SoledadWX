@@ -28,6 +28,10 @@ body {
   border-right: 1px solid rgba(255, 255, 255, 0.06);
   display: flex; flex-direction: column;
   padding: 1.1rem 0.7rem;
+  /* Pin to the viewport so the footer stays put no matter how tall the
+     page content is (e.g. Console). Only .content scrolls. */
+  position: sticky; top: 0; align-self: flex-start;
+  height: 100vh; box-sizing: border-box; overflow-y: auto;
 }
 .brand {
   font-size: 1.5rem; font-weight: 700; font-style: italic;
