@@ -36,11 +36,16 @@ interface DbStatus {
   total_observations: number;
   live_rows_today: number;
   last_write_utc: number | null;
+  archive_start: string | null;
   today_high_f: number | null;
   today_low_f: number | null;
   today_max_gust_mph: number | null;
   today_rain_in: number | null;
 }
+
+const fmtAge = (s: number) =>
+  s < 60 ? "just now" : s < 3600 ? `${Math.floor(s / 60)}m ago`
+  : s < 86400 ? `${Math.floor(s / 3600)}h ago` : `${Math.floor(s / 86400)}d ago`;
 
 interface SeriesPoint { t: number; avg: number; min: number; max: number; n: number }
 interface RangeStats {
@@ -212,6 +217,9 @@ function App() {
   const [reading, setReading] = useState<WeatherReading | null>(null);
   const [status, setStatus] = useState<DbStatus | null>(null);
   const [view, setView] = useState<View>("console");
+  // Pre-wired for auto-backfill-on-launch: shows a footer indicator while a
+  // cloud catch-up is running. Dormant (null) until that feature lands.
+  const [backfill] = useState<{ done: number } | null>(null);
 
   useEffect(() => {
     const unlisten = listen<WeatherReading>("weather-reading", (event) => {
@@ -249,11 +257,32 @@ function App() {
           ))}
         </ul>
         <div className="nav-foot">
-          <span>
-            <span className={recording ? "rec-dot rec-on" : "rec-dot rec-off"}>●</span>{" "}
-            {recording ? "Recording" : "Offline"}
-          </span>
-          {status && <span className="nav-foot-obs">{status.total_observations.toLocaleString()} obs</span>}
+          <div className="nf-station">
+            <div className="nf-model">Ambient WS-1002-WiFi</div>
+            <div className="nf-name">Mount Soledad South</div>
+          </div>
+
+          <div className="nf-line">
+            <span className={recording ? "rec-dot rec-on" : "rec-dot rec-off"}>●</span>
+            <span>{recording ? "Recording" : "Offline"}</span>
+            {lastWriteAge != null && <span className="nf-dim">{fmtAge(lastWriteAge)}</span>}
+          </div>
+
+          {backfill && (
+            <div className="nf-line nf-backfill">
+              <span className="rec-dot spin">◐</span>
+              <span>Backfilling{backfill.done ? ` ${backfill.done}` : "…"}</span>
+            </div>
+          )}
+
+          {status && (
+            <div className="nf-line nf-archive">
+              <span className="nf-dim">
+                {status.total_observations.toLocaleString()} obs
+                {status.archive_start && ` · since ${status.archive_start.slice(0, 4)}`}
+              </span>
+            </div>
+          )}
         </div>
       </nav>
 

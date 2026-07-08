@@ -158,6 +158,7 @@ pub struct DbStatus {
     pub total_observations: i64,
     pub live_rows_today: i64,
     pub last_write_utc: Option<i64>,
+    pub archive_start: Option<String>, // earliest ISO date in the archive
     pub today_high_f: Option<f64>,
     pub today_low_f: Option<f64>,
     pub today_max_gust_mph: Option<f64>,
@@ -201,10 +202,16 @@ pub fn status() -> Result<DbStatus, rusqlite::Error> {
     let (_, today_max_gust_mph) = minmax("windgustmph")?;
     let (_, today_rain_in) = minmax("dailyrainin")?;
 
+    // Cheap archive start from the rollups (95k rows) rather than scanning 17M obs.
+    let archive_start: Option<String> = conn
+        .query_row("SELECT MIN(day_utc) FROM daily_rollups", [], |r| r.get(0))
+        .unwrap_or(None);
+
     Ok(DbStatus {
         total_observations: total,
         live_rows_today: live_today,
         last_write_utc: last_write,
+        archive_start,
         today_high_f,
         today_low_f,
         today_max_gust_mph,
