@@ -195,6 +195,10 @@ PRIORITY = [
     ("2020-04-19", "2025-08-17", "wu_pws",        3),
     ("2025-08-17", None,         "amb_rest",      1),
     ("2025-08-17", None,         "amb_ws",        2),
+    # Standing current-era backup: a neighbor on a different ISP fills gaps
+    # from local internet outages (station can't reach the cloud). Only
+    # surfaces where amb_rest/amb_ws are silent.
+    ("2025-08-17", None,         "wu_ksandi354",  5),
 ]
 
 
