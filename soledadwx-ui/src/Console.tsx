@@ -78,6 +78,34 @@ function HiLo({ today, yesterday, dp = 1, unit }: {
   );
 }
 
+// Wind has no meaningful "low" — both figures are daily maxima (peak gust and
+// peak sustained), so it gets its own block instead of the High/Low one.
+function WindMax({ today, yesterday }: {
+  today: { gust: Extreme; sust: Extreme };
+  yesterday: { gust: Extreme; sust: Extreme };
+}) {
+  const cell = (e: Extreme) => (
+    <>
+      <span className="wnd-val">{fmt(e.value, 0)}</span> <span className="hl-unit">mph</span>
+      <div className="hl-at">@ {fmtT(e.ts)}</div>
+    </>
+  );
+  return (
+    <div className="hilo">
+      <div>
+        <div className="hl-head">Today</div>
+        <div className="hl-row">Peak gust {cell(today.gust)}</div>
+        <div className="hl-row">Max sustained {cell(today.sust)}</div>
+      </div>
+      <div>
+        <div className="hl-head">Yesterday</div>
+        <div className="hl-row">Peak gust {cell(yesterday.gust)}</div>
+        <div className="hl-row">Max sustained {cell(yesterday.sust)}</div>
+      </div>
+    </div>
+  );
+}
+
 function Card({ title, children, className = "" }: {
   title: string; children: React.ReactNode; className?: string;
 }) {
@@ -115,7 +143,7 @@ function rad(d: number) { return (d * Math.PI) / 180; }
 
 // ---------- wind rose (unchanged visual, MXUI card shell) ----------
 
-const BIN_COLORS = ["#3548c9", "#3f8de0", "#39cfc3", "#4ed44e", "#b6e34a", "#f5e042"];
+const BIN_COLORS = ["#3548c9", "#3f8de0", "#39cfc3", "#4ed44e", "#f5d13b", "#e5402e"];
 const BIN_LABELS = ["0–2", "2–5", "5–10", "10–15", "15–20", "20+"];
 
 function WindRose({ data }: { data: WindRoseData | null }) {
@@ -388,10 +416,9 @@ export default function Console({ reading }: { reading: WeatherReading | null })
           <div className="hero">{fmt(r?.windspeedmph)}<small>mph</small></div>
           <div className="sub">Gust {fmt(r?.windgustmph)} mph · {r?.winddir != null ? `${r.winddir}° ${cardinal(r.winddir)}` : "--"}</div>
           <div className="pairline"><span>Wind run today <b>{fmt(s?.wind_run_today_mi, 0)} mi</b></span></div>
-          {s && <HiLo unit="mph"
-            today={{ hi: s.today.high_gust, lo: s.today.high_wind }}
-            yesterday={{ hi: s.yesterday.high_gust, lo: s.yesterday.high_wind }} />}
-          <div className="hl-note">"High" = gust · "Low" = sustained</div>
+          {s && <WindMax
+            today={{ gust: s.today.high_gust, sust: s.today.high_wind }}
+            yesterday={{ gust: s.yesterday.high_gust, sust: s.yesterday.high_wind }} />}
         </Card>
 
         {/* 9 */}

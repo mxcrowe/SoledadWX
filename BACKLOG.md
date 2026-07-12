@@ -93,6 +93,16 @@ while for context, then prune). Newest context at the bottom of each item.
   (pre-Console/Records/footer/backfill and all of today's work). Run
   `npm run tauri build` to redeploy. Deferred while we keep making changes.
 
+## Today/Yesterday page — deferred polish
+
+- [ ] **Apparent-temperature family rows.** Beaumaris shows High/Low Feels Like,
+  Heat Index, Wind Chill, Humidex under Temperature; we omitted them because we
+  don't store those extremes per-day. Would need a backend calc over the day's
+  temp+humidity+wind rows (or storing the derived series). Also "Hours of
+  sunshine" and "Days since last dry / last rained."
+- [ ] **Optional: match Beaumaris difference colors** (blue = higher today,
+  red = lower). We use green-up / red-down. Trivial CSS flip if wanted.
+
 ## UI polish
 
 - [ ] **Footer "Update rate 60s" is a static label.** Fine for the WS-1002, but

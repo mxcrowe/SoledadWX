@@ -486,6 +486,124 @@ pub fn console_stats() -> Result<ConsoleStats, rusqlite::Error> {
     })
 }
 
+// ---------- Today / Yesterday comparison ----------
+
+#[derive(serde::Serialize, Default)]
+pub struct DayStat {
+    pub high: Extreme,
+    pub low: Extreme,
+    pub avg: Option<f64>,
+}
+
+#[derive(serde::Serialize)]
+pub struct MetricPair {
+    pub metric: String,
+    pub today: DayStat,
+    pub yesterday: DayStat,
+}
+
+#[derive(serde::Serialize)]
+pub struct DayCompare {
+    pub metrics: Vec<MetricPair>,
+    pub wind_run_today: Option<f64>,
+    pub wind_run_yest: Option<f64>,
+    pub dom_dir_today: Option<f64>,
+    pub dom_dir_yest: Option<f64>,
+}
+
+fn day_stat(conn: &Connection, metric: &str, a: i64, b: i64) -> DayStat {
+    let avg = conn
+        .query_row(
+            "SELECT AVG(value) FROM observations
+             WHERE metric_id=(SELECT id FROM metrics WHERE name=?1)
+               AND ts_utc >= ?2 AND ts_utc < ?3",
+            rusqlite::params![metric, a, b],
+            |r| r.get(0),
+        )
+        .ok()
+        .flatten();
+    DayStat {
+        high: extreme(conn, metric, a, b, true),
+        low: extreme(conn, metric, a, b, false),
+        avg,
+    }
+}
+
+/// Wind run (miles): mean speed over the window × elapsed hours.
+fn wind_run_for(conn: &Connection, a: i64, b: i64, hours: f64) -> Option<f64> {
+    conn.query_row(
+        "SELECT AVG(value) FROM observations
+         WHERE metric_id=(SELECT id FROM metrics WHERE name='windspeedmph')
+           AND ts_utc >= ?1 AND ts_utc < ?2",
+        rusqlite::params![a, b],
+        |r| r.get::<_, Option<f64>>(0),
+    )
+    .ok()
+    .flatten()
+    .map(|v| v * hours)
+}
+
+/// Dominant wind direction (deg): speed-weighted vector mean over the window.
+fn dominant_dir(conn: &Connection, a: i64, b: i64) -> Option<f64> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT d.value, s.value FROM observations d
+             JOIN observations s ON s.ts_utc = d.ts_utc
+             WHERE d.metric_id=(SELECT id FROM metrics WHERE name='winddir')
+               AND s.metric_id=(SELECT id FROM metrics WHERE name='windspeedmph')
+               AND d.ts_utc >= ?1 AND d.ts_utc < ?2",
+        )
+        .ok()?;
+    let rows = stmt
+        .query_map(rusqlite::params![a, b], |r| {
+            Ok((r.get::<_, f64>(0)?, r.get::<_, f64>(1)?))
+        })
+        .ok()?;
+    let (mut east, mut north) = (0.0_f64, 0.0_f64);
+    for (dir, spd) in rows.flatten() {
+        let w = if spd > 0.0 { spd } else { 0.1 }; // calm still contributes a little
+        east += w * dir.to_radians().sin();
+        north += w * dir.to_radians().cos();
+    }
+    if east == 0.0 && north == 0.0 {
+        return None;
+    }
+    let mut deg = east.atan2(north).to_degrees();
+    if deg < 0.0 {
+        deg += 360.0;
+    }
+    Some(deg)
+}
+
+pub fn day_compare() -> Result<DayCompare, rusqlite::Error> {
+    let conn = Connection::open(db_path())?;
+    let now = chrono::Utc::now().timestamp();
+    let mid0 = local_midnight_epoch(0);
+    let mid1 = local_midnight_epoch(1);
+
+    let names = [
+        "tempf", "dewpointf", "humidity", "baromrelin", "windspeedmph",
+        "windgustmph", "rainratein", "dailyrainin", "solarradiation", "uv",
+    ];
+    let metrics = names
+        .iter()
+        .map(|m| MetricPair {
+            metric: m.to_string(),
+            today: day_stat(&conn, m, mid0, now),
+            yesterday: day_stat(&conn, m, mid1, mid0),
+        })
+        .collect();
+
+    let hours_today = (now - mid0) as f64 / 3600.0;
+    Ok(DayCompare {
+        metrics,
+        wind_run_today: wind_run_for(&conn, mid0, now, hours_today),
+        wind_run_yest: wind_run_for(&conn, mid1, mid0, 24.0),
+        dom_dir_today: dominant_dir(&conn, mid0, now),
+        dom_dir_yest: dominant_dir(&conn, mid1, mid0),
+    })
+}
+
 #[derive(serde::Serialize)]
 pub struct WindRose {
     /// counts[sector][bin]: 16 compass sectors (N=0, clockwise), speed bins

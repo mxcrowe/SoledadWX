@@ -283,6 +283,7 @@ p {
 .hl-row { font-size: 0.92rem; margin: 0.12rem 0; }
 .hl-row .hi { color: #ff6b6b; font-weight: 600; font-variant-numeric: tabular-nums; }
 .hl-row .lo { color: #63b3ff; font-weight: 600; font-variant-numeric: tabular-nums; }
+.hl-row .wnd-val { color: #6fd06f; font-weight: 600; font-variant-numeric: tabular-nums; }
 .hl-unit { font-size: 0.75rem; opacity: 0.6; }
 .hl-at { font-size: 0.75rem; opacity: 0.55; }
 .hl-note { font-size: 0.72rem; opacity: 0.5; margin-top: 0.3rem; }
@@ -316,6 +317,45 @@ p {
 .rec-value { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; font-size: 1.1rem; }
 .rec-unit { font-size: 0.8rem; opacity: 0.6; font-weight: 400; }
 .rec-when { text-align: right; color: #9fb4e8; font-size: 0.9rem; white-space: nowrap; }
+
+/* ---------- Today / Yesterday page ---------- */
+.dayyest { max-width: 860px; margin: 0 auto; }
+.dy-table {
+  width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums;
+  border: 1px solid rgba(128,128,128,0.28);
+}
+/* Column rules + row rules make the grid that tames the wall of numbers. */
+.dy-table td {
+  padding: 0.34rem 0.6rem;
+  border-bottom: 1px solid rgba(128,128,128,0.14);
+  border-right: 1px solid rgba(128,128,128,0.12);
+}
+.dy-table td:last-child { border-right: none; }
+/* Single column-header row, larger type, centered over each column group. */
+.dy-head td {
+  font-size: 1.05rem; font-weight: 700; text-align: center; letter-spacing: 0.02em;
+  padding: 0.45rem 0.6rem; color: #dfe4ee;
+  border-bottom: 1px solid rgba(128,128,128,0.35);
+}
+.dy-head td:first-child { border-right: none; }
+/* Zebra banding on data rows. */
+.dy-table tr:nth-child(even) td { background: rgba(255,255,255,0.030); }
+.dy-table tr.dy-head td { background: none; }
+.dy-group td {
+  background: rgba(100,148,237,0.15) !important;
+  font-size: 0.98rem; text-transform: uppercase; letter-spacing: 0.07em;
+  padding-top: 0.55rem; padding-bottom: 0.4rem;
+  border-top: 1px solid rgba(128,128,128,0.3);
+  border-bottom: 1px solid rgba(128,128,128,0.3);
+  color: #6ea6ff; font-weight: 700;
+}
+.dy-label { opacity: 0.85; }
+.dy-val { text-align: right; font-weight: 600; white-space: nowrap; }
+.dy-unit { font-size: 0.72rem; opacity: 0.55; font-weight: 400; margin-left: 0.15rem; }
+.dy-at { text-align: left; font-size: 0.8rem; color: #9fb4e8; white-space: nowrap; }
+.dy-diff { text-align: right; font-size: 0.9rem; opacity: 0.85; white-space: nowrap; }
+.dy-diff.dy-up { color: #6fd06f; }
+.dy-diff.dy-down { color: #ff8f8f; }
 
 /* ---------- Nav footer status ---------- */
 .nf-station { padding: 0 0.8rem 0.5rem; border-bottom: 1px solid rgba(255,255,255,0.07); margin-bottom: 0.5rem; }
