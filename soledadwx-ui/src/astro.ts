@@ -149,6 +149,28 @@ export function clearSkyGHI(altitudeDeg: number): number {
   return 1368 * Math.pow(0.8, airMass) * sinAlt;
 }
 
+// Fraction of the theoretical clear-sky DAILY energy this (flat, south-tilted,
+// cup-shadowed) sensor captures on a genuinely clear day. Calibrated from the
+// archive — clearest recent day integrated to ~0.62 of the model. It's the one
+// knob for the "% of a clear day" readout; recalibrate as the sensor ages or
+// when the station is upgraded (a proper horizontal pyranometer → ~0.9+).
+export const SOLAR_CLEAR_CAPTURE = 0.62;
+
+/** Theoretical clear-sky global-horizontal energy (kWh/m²) from `from` to `to`,
+ *  integrating the Ryan–Stolzenbach model in 5-minute steps. */
+export function clearSkyEnergyKwh(from: Date, to: Date): number {
+  const stepMs = 5 * 60 * 1000;
+  if (to.getTime() <= from.getTime()) return 0;
+  let joules = 0;
+  let prev = clearSkyGHI(solarAltitudeDeg(from));
+  for (let t = from.getTime() + stepMs; t <= to.getTime(); t += stepMs) {
+    const cur = clearSkyGHI(solarAltitudeDeg(new Date(t)));
+    joules += ((prev + cur) / 2) * (stepMs / 1000); // W/m² × s = J/m²
+    prev = cur;
+  }
+  return joules / 3.6e6; // → kWh/m²
+}
+
 export interface SkyState { usable: boolean; fraction: number; label: string; clearGHI: number }
 
 // A genuinely clear day reaches only a fraction of the pure model (aerosols,

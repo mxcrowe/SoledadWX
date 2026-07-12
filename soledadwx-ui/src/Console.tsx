@@ -5,7 +5,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { astro, cardinal, cloudBaseFt, fmtDur, fmtHM, heatIndexF, skyState, windChillF } from "./astro";
+import { astro, cardinal, clearSkyEnergyKwh, cloudBaseFt, fmtDur, fmtHM, heatIndexF, skyState, SOLAR_CLEAR_CAPTURE, windChillF } from "./astro";
 import { SteelRadial, SteelWindDir } from "./SteelGauge";
 import type { WeatherReading } from "./App";
 
@@ -25,6 +25,8 @@ interface ConsoleStats {
   rain_yesterday_in: number | null;
   rain_month_in: number | null;
   rain_year_in: number | null;
+  solar_energy_today_kwh: number | null;
+  solar_energy_yest_kwh: number | null;
   today: DayExtremes;
   yesterday: DayExtremes;
 }
@@ -332,6 +334,26 @@ export default function Console({ reading }: { reading: WeatherReading | null })
     return ((Math.atan2(east, north) * 180) / Math.PI + 360) % 360;
   }, [windBuf, reading]);
 
+  // "% of a clear day": measured daily solar energy vs. the theoretical
+  // clear-sky energy over the same window, scaled by this sensor's known
+  // clear-day capture fraction (so a genuinely sunny day reads ~100%). Today is
+  // compared against clear-sky-so-far; yesterday against the full day.
+  const pctClearToday = useMemo(() => {
+    const e = stats?.solar_energy_today_kwh;
+    if (e == null) return null;
+    const mid0 = new Date(); mid0.setHours(0, 0, 0, 0);
+    const cs = clearSkyEnergyKwh(mid0, new Date());
+    return cs > 0.05 ? (e / (cs * SOLAR_CLEAR_CAPTURE)) * 100 : null;
+  }, [stats?.solar_energy_today_kwh, clock.getMinutes()]);
+  const pctClearYest = useMemo(() => {
+    const e = stats?.solar_energy_yest_kwh;
+    if (e == null) return null;
+    const mid0 = new Date(); mid0.setHours(0, 0, 0, 0);
+    const mid1 = new Date(mid0.getTime() - 86_400_000);
+    const cs = clearSkyEnergyKwh(mid1, mid0);
+    return cs > 0.05 ? (e / (cs * SOLAR_CLEAR_CAPTURE)) * 100 : null;
+  }, [stats?.solar_energy_yest_kwh]);
+
   return (
     <div className="mx">
       <header className="mx-head">
@@ -446,6 +468,15 @@ export default function Console({ reading }: { reading: WeatherReading | null })
           <div className="hero">{fmt(r?.solarradiation, 0)}<small>W/m²</small></div>
           <div className="pairline"><span>UV index <b>{fmt(r?.uv, 0)}</b></span>
             <span>{(r?.solarradiation ?? 0) > 10 ? "☀️ Sun up" : "🌙 Sun down"}</span></div>
+          <div className="pairline">
+            <span>Energy today <b>{fmt(s?.solar_energy_today_kwh, 2)} kWh/m²</b></span>
+            <span>Yest <b>{fmt(s?.solar_energy_yest_kwh, 2)}</b></span>
+          </div>
+          <div className="pairline">
+            <span>Sun vs clear day <b>{pctClearToday == null ? "--" : `${Math.round(pctClearToday)}%`}</b></span>
+            <span>Yest <b>{pctClearYest == null ? "--" : `${Math.round(pctClearYest)}%`}</b></span>
+          </div>
+          <div className="hl-note">est. — sensor reads relative, not calibrated</div>
         </Card>
       </div>
     </div>

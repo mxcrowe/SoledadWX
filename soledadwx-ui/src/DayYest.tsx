@@ -4,6 +4,7 @@
 
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { clearSkyEnergyKwh, SOLAR_CLEAR_CAPTURE } from "./astro";
 
 interface Extreme { value: number | null; ts: number | null }
 interface DayStat { high: Extreme; low: Extreme; avg: number | null }
@@ -14,6 +15,8 @@ interface DayCompare {
   wind_run_yest: number | null;
   dom_dir_today: number | null;
   dom_dir_yest: number | null;
+  solar_energy_today: number | null;
+  solar_energy_yest: number | null;
 }
 
 const CARDINALS = [
@@ -81,6 +84,18 @@ export default function DayYest() {
 
   const dirCell = (deg: number | null) =>
     deg == null ? "--" : `${Math.round(deg)}° ${cardinal(deg)}`;
+
+  // "% of a clear day" (same calc as the Console): measured solar energy vs.
+  // theoretical clear-sky energy over the matching window × sensor capture.
+  const pctClear = (kwh: number | null, from: Date, to: Date) => {
+    if (kwh == null) return null;
+    const cs = clearSkyEnergyKwh(from, to);
+    return cs > 0.05 ? (kwh / (cs * SOLAR_CLEAR_CAPTURE)) * 100 : null;
+  };
+  const mid0 = new Date(); mid0.setHours(0, 0, 0, 0);
+  const mid1 = new Date(mid0.getTime() - 86_400_000);
+  const pctToday = pctClear(d.solar_energy_today, mid0, new Date());
+  const pctYest = pctClear(d.solar_energy_yest, mid1, mid0);
 
   return (
     <div className="dayyest">
@@ -162,6 +177,10 @@ export default function DayYest() {
           <StatRow label="High UV index" unit="" dp={0}
             today={uv?.today.high.value ?? null} todayTs={uv?.today.high.ts}
             yest={uv?.yesterday.high.value ?? null} yestTs={uv?.yesterday.high.ts} />
+          <StatRow label="Solar energy" unit="kWh/m²" dp={2} noTime
+            today={d.solar_energy_today} yest={d.solar_energy_yest} />
+          <StatRow label="Sun vs clear day" unit="%" dp={0} noTime
+            today={pctToday} yest={pctYest} />
         </tbody>
       </table>
     </div>

@@ -374,8 +374,41 @@ pub struct ConsoleStats {
     pub rain_yesterday_in: Option<f64>,
     pub rain_month_in: Option<f64>,
     pub rain_year_in: Option<f64>,
+    pub solar_energy_today_kwh: Option<f64>,
+    pub solar_energy_yest_kwh: Option<f64>,
     pub today: DayExtremes,
     pub yesterday: DayExtremes,
+}
+
+/// Daily solar energy (kWh/m²): trapezoidal time-integral of own-station
+/// irradiance. Filtered to our WS-1002 sources (2,3,4) so neighbor-station
+/// solar can't contaminate the sum. Gaps over 10 min are not bridged.
+fn solar_energy_kwh(conn: &Connection, a: i64, b: i64) -> Option<f64> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT ts_utc, value FROM observations
+             WHERE metric_id=(SELECT id FROM metrics WHERE name='solarradiation')
+               AND source_id IN (2, 3, 4)
+               AND ts_utc >= ?1 AND ts_utc < ?2
+             ORDER BY ts_utc",
+        )
+        .ok()?;
+    let rows: Vec<(i64, f64)> = stmt
+        .query_map(rusqlite::params![a, b], |r| Ok((r.get(0)?, r.get(1)?)))
+        .ok()?
+        .flatten()
+        .collect();
+    if rows.len() < 2 {
+        return None;
+    }
+    let mut joules = 0.0;
+    for w in rows.windows(2) {
+        let dt = (w[1].0 - w[0].0) as f64;
+        if dt > 0.0 && dt <= 600.0 {
+            joules += (w[0].1 + w[1].1) / 2.0 * dt; // W/m² × s = J/m²
+        }
+    }
+    Some(joules / 3.6e6) // J/m² → kWh/m²
 }
 
 fn local_midnight_epoch(days_back: i64) -> i64 {
@@ -481,6 +514,8 @@ pub fn console_stats() -> Result<ConsoleStats, rusqlite::Error> {
         rain_yesterday_in,
         rain_month_in: latest("monthlyrainin"),
         rain_year_in: latest("yearlyrainin"),
+        solar_energy_today_kwh: solar_energy_kwh(&conn, mid0, now),
+        solar_energy_yest_kwh: solar_energy_kwh(&conn, mid1, mid0),
         today: day_extremes(&conn, mid0, now),
         yesterday: day_extremes(&conn, mid1, mid0),
     })
@@ -509,6 +544,8 @@ pub struct DayCompare {
     pub wind_run_yest: Option<f64>,
     pub dom_dir_today: Option<f64>,
     pub dom_dir_yest: Option<f64>,
+    pub solar_energy_today: Option<f64>,
+    pub solar_energy_yest: Option<f64>,
 }
 
 fn day_stat(conn: &Connection, metric: &str, a: i64, b: i64) -> DayStat {
@@ -601,6 +638,8 @@ pub fn day_compare() -> Result<DayCompare, rusqlite::Error> {
         wind_run_yest: wind_run_for(&conn, mid1, mid0, 24.0),
         dom_dir_today: dominant_dir(&conn, mid0, now),
         dom_dir_yest: dominant_dir(&conn, mid1, mid0),
+        solar_energy_today: solar_energy_kwh(&conn, mid0, now),
+        solar_energy_yest: solar_energy_kwh(&conn, mid1, mid0),
     })
 }
 
