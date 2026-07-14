@@ -118,6 +118,53 @@ while for context, then prune). Newest context at the bottom of each item.
 
 ---
 
+## Ideas from the field (benchmark survey Jul 14 2026)
+
+Harvested from the three best amateur stations we found — all CumulusMX-family:
+Silver Acorn (Royal Oak, Auckland; author of the **MXUI** template our Console is
+inspired by), Beaumaris BWX (Tasmania; a heavily-extended MXUI), and
+WeatherStation40 / WS40 (Italy; commercial WordPress template, ~23 modular
+blocks). They're gorgeous *live* dashboards but mostly live + light history —
+SoledadWX already has the thing they lack (17-yr unified multi-source archive
+with provenance). So this is display-idea shopping to sit on our deeper engine.
+(Both BWX and WS40 are so heavy they hang a headless screenshot — a caution
+against over-building the UI.)
+
+### Cheap, local-only (no external API)
+- [ ] **Beaufort force** on the wind card + Today/Yesterday. All THREE show it;
+  we're the odd one out. Trivial mph→force lookup (0 Calm … 12 Hurricane).
+- [ ] **Finish the apparent-temp family** — we have Feels Like / Heat Index /
+  Wind Chill; add **Wet Bulb** and **Humidex** (pure formulae from temp/RH/
+  pressure). Same gap already noted under "Today/Yesterday deferred polish".
+- [ ] **Richer astro** in astro.ts — **solar noon, day length** (have), plus
+  **civil / nautical / astronomical** twilight, and **moonrise / moonset**.
+  We already have the solar-altitude engine to compute all of it.
+- [ ] **Sun hours** (bright-sunshine: time solar > ~120 W/m² today). Ties into
+  the solar-energy work; relative-only on our tilted sensor but honest.
+- [ ] **10-min wind-speed average** — we already buffer wind for the vector dir
+  average; adding a speed average is nearly free.
+- [ ] **Multi-period rain** — last hour / 24 h / week / month / year, plus
+  "storm rain" (accumulation since rain began).
+- [ ] **Per-metric trend arrows** (↑ ↓ →) — extend the temp/press/humidity
+  trends we already compute to the other cards.
+- [ ] **Zambretti "System Forecast"** — Silver Acorn's offline pressure-trend +
+  wind + season lookup → a plain-text forecast line. No API. A classic Cumulus
+  feature and a cheap bridge to the eventual AI "Oracle".
+
+### External API — and especially relevant to San Diego
+- [ ] **NWS forecast + alerts** — `api.weather.gov` (free, no key): real text/
+  icon forecast AND active alerts (fire weather, heat, wind, flood) for La
+  Jolla. The honest bridge to the Oracle; BWX/WS40 both lean on feeds like this.
+- [ ] **Air Quality / AQI** — WS40 has a full PM1/2.5/10 + AQI block. For a
+  wildfire-prone hilltop this is arguably MORE useful to us than to them.
+  AirNow (free key) or Open-Meteo/CAMS.
+- [ ] **Rain radar** — RainViewer tiles on a small Leaflet map (free; all three
+  embed it). Also satellite imagery (EUMETSAT there; US = GOES).
+- [ ] **Earthquakes** — USGS feed (BWX shows quakes; San Diego has faults).
+
+### Skip — climate/region mismatch
+Saharan dust & AOD, European pollen, Mediterranean-wind rose, ASX200 ticker.
+
 ## Product roadmap (pointer, not duplicated here)
 
 Page-build order lives in `Dashboard/PAGES_SPEC.md`. Next cheapest wins:
