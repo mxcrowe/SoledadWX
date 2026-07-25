@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import Console from "./Console";
 import Records from "./Records";
 import DayYest from "./DayYest";
+import { displayUnit, fmtKt, unitFactor, WIND_UNIT } from "./units";
 import "./App.css";
 
 export interface WeatherReading {
@@ -129,7 +130,11 @@ function Analyst() {
   const [stats, setStats] = useState<RangeStats | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const unit = METRICS.find(m => m[0] === metric)?.[2] ?? "";
+  // Wind is stored in mph; display (and plot) it in knots. Label and values
+  // are converted together — never one without the other.
+  const storedUnit = METRICS.find(m => m[0] === metric)?.[2] ?? "";
+  const unit = displayUnit(storedUnit);
+  const uk = unitFactor(storedUnit);
 
   const run = () => {
     setBusy(true); setErr(null);
@@ -159,13 +164,13 @@ function Analyst() {
       {stats && (
         <div className="stats-row">
           <div className="stat"><span className="label">Min</span>
-            <span className="val">{stats.min_value.toFixed(2)} {unit}</span>
+            <span className="val">{(stats.min_value * uk).toFixed(2)} {unit}</span>
             <span className="when">{fmtTs(stats.min_ts)}</span></div>
           <div className="stat"><span className="label">Max</span>
-            <span className="val">{stats.max_value.toFixed(2)} {unit}</span>
+            <span className="val">{(stats.max_value * uk).toFixed(2)} {unit}</span>
             <span className="when">{fmtTs(stats.max_ts)}</span></div>
           <div className="stat"><span className="label">Average</span>
-            <span className="val">{stats.avg_value.toFixed(2)} {unit}</span>
+            <span className="val">{(stats.avg_value * uk).toFixed(2)} {unit}</span>
             <span className="when">{stats.n_samples.toLocaleString()} samples / {stats.days_covered.toLocaleString()} days</span></div>
           {stats.wind_run_mi != null && (
             <div className="stat"><span className="label">Wind run</span>
@@ -174,7 +179,10 @@ function Analyst() {
           )}
         </div>
       )}
-      {series && <Chart series={series} unit={unit} />}
+      {series && <Chart
+        series={uk === 1 ? series
+          : series.map(p => ({ ...p, avg: p.avg * uk, min: p.min * uk, max: p.max * uk }))}
+        unit={unit} />}
       {series && series.length > 0 && (
         <p className="chart-note">
           Band = daily min→max · line = daily average · {series.length.toLocaleString()} days shown
@@ -323,8 +331,8 @@ function App() {
           <div className="data-box"><span className="label">Dew Point (In)</span><span className="val">{reading.dewPointin}°F</span></div>
 
           {/* Group 3: Wind */}
-          <div className="data-box"><span className="label">Wind Speed</span><span className="val">{reading.windspeedmph ? (reading.windspeedmph * 0.868976).toFixed(1) : "--"} kts</span></div>
-          <div className="data-box"><span className="label">Wind Gust</span><span className="val">{reading.windgustmph ? (reading.windgustmph * 0.868976).toFixed(1) : "--"} kts</span></div>
+          <div className="data-box"><span className="label">Wind Speed</span><span className="val">{fmtKt(reading.windspeedmph)} {WIND_UNIT}</span></div>
+          <div className="data-box"><span className="label">Wind Gust</span><span className="val">{fmtKt(reading.windgustmph)} {WIND_UNIT}</span></div>
           <div className="data-box"><span className="label">Max Daily Gust</span><span className="val">{reading.maxdailygust ? (reading.maxdailygust * 0.868976).toFixed(1) : "--"} kts</span></div>
           <div className="data-box"><span className="label">Wind Dir</span><span className="val">{reading.winddir}°</span></div>
 

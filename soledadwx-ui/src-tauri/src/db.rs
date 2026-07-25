@@ -673,8 +673,13 @@ pub fn wind_rose(hours: i64) -> Result<WindRose, rusqlite::Error> {
            AND d.ts_utc >= ?1",
     )?;
     let rows = stmt.query_map([since], |r| Ok((r.get::<_, f64>(0)?, r.get::<_, f64>(1)?)))?;
+    // Bin edges are KNOTS (the station's display unit — see src/units.ts).
+    // Observations are stored in mph, so convert first; the 20+ red band
+    // therefore means 20 kt (~23 mph), which is what MXC intends by it.
+    const MPH_TO_KT: f64 = 0.8689762419006479;
     for row in rows {
-        let (dir, speed) = row?;
+        let (dir, speed_mph) = row?;
+        let speed = speed_mph * MPH_TO_KT;
         total += 1;
         if speed < 0.5 {
             calm += 1;

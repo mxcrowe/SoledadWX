@@ -5,6 +5,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { clearSkyEnergyKwh, SOLAR_CLEAR_CAPTURE } from "./astro";
+import { toKt, WIND_RUN_UNIT, WIND_UNIT } from "./units";
 
 interface Extreme { value: number | null; ts: number | null }
 interface DayStat { high: Extreme; low: Extreme; avg: number | null }
@@ -139,14 +140,14 @@ export default function DayYest() {
             yest={hum?.yesterday.low.value ?? null} yestTs={hum?.yesterday.low.ts} />
 
           <GroupHead title="Wind" />
-          <StatRow label="Highest gust" unit="mph"
-            today={gust?.today.high.value ?? null} todayTs={gust?.today.high.ts}
-            yest={gust?.yesterday.high.value ?? null} yestTs={gust?.yesterday.high.ts} />
-          <StatRow label="Highest sustained" unit="mph"
-            today={spd?.today.high.value ?? null} todayTs={spd?.today.high.ts}
-            yest={spd?.yesterday.high.value ?? null} yestTs={spd?.yesterday.high.ts} />
-          <StatRow label="Wind run" unit="mi" dp={0} noTime
-            today={d.wind_run_today} yest={d.wind_run_yest} />
+          <StatRow label="Highest gust" unit={WIND_UNIT}
+            today={toKt(gust?.today.high.value)} todayTs={gust?.today.high.ts}
+            yest={toKt(gust?.yesterday.high.value)} yestTs={gust?.yesterday.high.ts} />
+          <StatRow label="Highest sustained" unit={WIND_UNIT}
+            today={toKt(spd?.today.high.value)} todayTs={spd?.today.high.ts}
+            yest={toKt(spd?.yesterday.high.value)} yestTs={spd?.yesterday.high.ts} />
+          <StatRow label="Wind run" unit={WIND_RUN_UNIT} dp={0} noTime
+            today={toKt(d.wind_run_today)} yest={toKt(d.wind_run_yest)} />
           <tr>
             <td className="dy-label">Dominant direction</td>
             <td className="dy-val">{dirCell(d.dom_dir_today)}</td>

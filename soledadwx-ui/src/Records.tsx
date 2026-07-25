@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { toDisplay } from "./units";
 
 interface RecordRow {
   label: string;
@@ -56,15 +57,19 @@ export default function Records() {
 
       <table className="rec-table">
         <tbody>
-          {cat.rows.map((r) => (
+          {cat.rows.map((r) => {
+            // Wind is stored in mph but displayed in knots (wind run in nm).
+            const d = toDisplay(r.value, r.unit);
+            return (
             <tr key={r.label}>
               <td className="rec-label">{r.label}</td>
               <td className="rec-value">
-                {r.value.toFixed(dp(r.unit))} <span className="rec-unit">{r.unit}</span>
+                {(d.value ?? 0).toFixed(dp(r.unit))} <span className="rec-unit">{d.unit}</span>
               </td>
               <td className="rec-when">{fmtWhen(r)}</td>
             </tr>
-          ))}
+            );
+          })}
         </tbody>
       </table>
     </div>

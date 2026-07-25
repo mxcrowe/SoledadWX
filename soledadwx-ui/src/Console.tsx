@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { astro, cardinal, clearSkyEnergyKwh, cloudBaseFt, fmtDur, fmtHM, heatIndexF, skyState, SOLAR_CLEAR_CAPTURE, windChillF } from "./astro";
 import { SteelRadial, SteelWindDir } from "./SteelGauge";
+import { fmtKt, toKt, WIND_RUN_UNIT, WIND_UNIT } from "./units";
 import type { WeatherReading } from "./App";
 
 interface Extreme { value: number | null; ts: number | null }
@@ -88,7 +89,7 @@ function WindMax({ today, yesterday }: {
 }) {
   const cell = (e: Extreme) => (
     <>
-      <span className="wnd-val">{fmt(e.value, 0)}</span> <span className="hl-unit">mph</span>
+      <span className="wnd-val">{fmtKt(e.value, 0)}</span> <span className="hl-unit">{WIND_UNIT}</span>
       <div className="hl-at">@ {fmtT(e.ts)}</div>
     </>
   );
@@ -189,7 +190,7 @@ function WindRose({ data }: { data: WindRoseData | null }) {
         {BIN_LABELS.map((l, i) => (
           <span key={l}><i style={{ background: BIN_COLORS[i] }} />{l}</span>
         ))}
-        <span className="rose-meta">mph · {data.hours} h · calm {Math.round((data.calm / data.total) * 100)}%</span>
+        <span className="rose-meta">{WIND_UNIT} · {data.hours} h · calm {Math.round((data.calm / data.total) * 100)}%</span>
       </div>
     </div>
   );
@@ -427,7 +428,7 @@ export default function Console({ reading }: { reading: WeatherReading | null })
         </Card>
 
         {/* 5 */}
-        <Card title="Wind Speed"><SteelRadial value={r?.windspeedmph} title="Wind Speed" unit="mph" max={40} /></Card>
+        <Card title="Wind Speed"><SteelRadial value={toKt(r?.windspeedmph) ?? undefined} title="Wind Speed" unit={WIND_UNIT} max={40} /></Card>
         {/* 6 */}
         <Card title="Wind Direction"><SteelWindDir latest={r?.winddir} average={avgWindDir} /></Card>
         {/* 7 */}
@@ -435,9 +436,9 @@ export default function Console({ reading }: { reading: WeatherReading | null })
 
         {/* 8 */}
         <Card title="Wind">
-          <div className="hero">{fmt(r?.windspeedmph)}<small>mph</small></div>
-          <div className="sub">Gust {fmt(r?.windgustmph)} mph · {r?.winddir != null ? `${r.winddir}° ${cardinal(r.winddir)}` : "--"}</div>
-          <div className="pairline"><span>Wind run today <b>{fmt(s?.wind_run_today_mi, 0)} mi</b></span></div>
+          <div className="hero">{fmtKt(r?.windspeedmph)}<small>{WIND_UNIT}</small></div>
+          <div className="sub">Gust {fmtKt(r?.windgustmph)} {WIND_UNIT} · {r?.winddir != null ? `${r.winddir}° ${cardinal(r.winddir)}` : "--"}</div>
+          <div className="pairline"><span>Wind run today <b>{fmtKt(s?.wind_run_today_mi, 0)} {WIND_RUN_UNIT}</b></span></div>
           {s && <WindMax
             today={{ gust: s.today.high_gust, sust: s.today.high_wind }}
             yesterday={{ gust: s.yesterday.high_gust, sust: s.yesterday.high_wind }} />}

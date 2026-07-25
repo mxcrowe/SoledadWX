@@ -44,6 +44,26 @@ while for context, then prune). Newest context at the bottom of each item.
   (a suspicious-looking value, 9.84251968503936, is just 4.4 m/s converted; it
   coincidentally equals 3.0 x 3.28084, which briefly looked like a ft/mph mixup).
 
+- [ ] **Wind GUST is not comparable across sources** (same twin as the solar
+  finding). For the SAME physical anemometer in the SAME years, the median
+  gust factor (gust / same-timestamp sustained) is:
+      WU src7      1.78-1.81   (2018-2023, every year)
+      HP2000 src2  1.20-1.22   (2020-2025, every year)
+      Ambient 3/4  1.19-1.21
+  2020, 2022 and 2023 have BOTH paths running simultaneously, so this is a
+  property of the upload path, not of the year, the mast or the weather —
+  WU derives "gust" over a different window than the station's own log.
+  Consequence: the all-time gust record (52.1 kt, 2019-02-02, src7) is not
+  commensurable with the rest of the archive. MXC flagged it on instinct —
+  he knows >30 kt over the house is memorable and 52 kt would be unforgettable.
+  The 2019-02-02 STORM is real (8 of the top 10 gusts, sustained 20-25 kt all
+  afternoon); it is the cross-source comparison that is invalid.
+  Fix: normalize gust by source (as with solar) or exclude WU from gust
+  records. Do NOT "correct" the underlying values — they are each right in
+  their own convention. *(Found Jul 24 2026.)*
+  Hypothesis tested and REJECTED: mast wobble inflating gusts pre-guy-wires.
+  The apparent 2022/23 step is entirely a source changeover, not a repair date.
+
 ## Instrument / sensor health
 
 - [ ] **★ Solar sensor blocked at HIGH sun angles (Jul 8 2026, refined dx).**
