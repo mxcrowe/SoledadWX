@@ -4,7 +4,10 @@ Import the Cumulus (Sandysoft) era: Sep 2009 -> Aug 2018.
 Two file families in Legacy/Cumulus-Historical-Data/data/:
 
   MMMYYlog.txt  — interval readings (~20 min), comma-separated, dd/mm/yy dates,
-                  imperial units (Cumulus was configured F/inHg/mph/in).
+                  units are whatever Cumulus was configured to DISPLAY, because
+                  Cumulus writes its logs in user units, not base units:
+                      F / inHg / in / KNOTS
+                  Wind is knots and must be converted (see WIND UNITS below).
                   Column count GREW over the years (17 in 2009 -> 27 by 2018);
                   older rows are a strict prefix of monthlyfileheader.txt.
   dayfile.txt   — one row per day, 46-field layout per dayfileheader.txt,
@@ -33,6 +36,30 @@ import wxdb
 
 DATA_DIR = wxdb.ROOT / "Legacy" / "Cumulus-Historical-Data" / "data"
 LOCAL_TZ = ZoneInfo("America/Los_Angeles")
+
+# ---------------------------------------------------------------- WIND UNITS
+# Cumulus logs in DISPLAY units, and this station's Cumulus displayed KNOTS:
+#   Legacy/Cumulus-Historical-Data/cumulus.ini      -> WindUnit=3   (3 = knots)
+#   Legacy/Cumulus-Historical-Data/Diags/cumulus.*  -> "WindUnit=kts"
+# Confirmed independently against the archive's own physics (Jul 24 2026), so
+# the finding does not rest on the config files alone -- recomputing Cumulus's
+# OWN logged wind chill (712 rows) and apparent temperature (76,091 rows) from
+# the logged temp/humidity/wind reproduces them to ~0.04 F if the wind is read
+# as knots, vs ~0.33-0.47 F if read as mph. Both formulas take wind in
+# mph / m-per-s respectively, so they can only balance in one unit.
+#
+# NOTE this is invisible to cross-source comparison: source_priority gives each
+# era exactly one source, so the Cumulus era never overlaps the mph-native
+# sources. Annual means across the 2018 changeover conflate unit, season,
+# anemometer and siting -- do NOT try to re-derive this that way.
+#
+# Temperature (F), rain (in) and pressure (inHg) were assumed correctly and
+# need no conversion: TempUnit=1, RainUnit=1, PressureUnit=in.
+KNOTS_TO_MPH = 1.150779448023542
+# Canonical metrics from the monthly log that arrive in knots.
+KNOT_METRICS = {"windspeedmph", "windgustmph"}
+# daily_summaries columns from dayfile.txt that arrive in knots / nautical mi.
+KNOT_DAYFILE_COLS = {"max_gust_mph", "high_avg_wind_mph", "wind_run_mi"}
 
 # Monthly log column index (0-based) -> canonical metric.
 # Per monthlyfileheader.txt. Skipped: rainfall counter (11), current gust (14),
@@ -151,6 +178,9 @@ def import_monthly(conn) -> None:
                     val = float(cell)
                 except ValueError:
                     continue
+                # Knots -> mph BEFORE the bounds check; BOUNDS are in mph.
+                if canon in KNOT_METRICS:
+                    val *= KNOTS_TO_MPH
                 lo, hi = BOUNDS[canon]
                 if not (lo <= val <= hi):
                     n_oob += 1
@@ -187,9 +217,14 @@ def import_dayfile(conn) -> None:
                 values[col] = cell
             else:
                 try:
-                    values[col] = float(cell)
+                    v = float(cell)
                 except ValueError:
-                    pass
+                    continue
+                # Knots -> mph; wind_run_mi is nautical -> statute miles
+                # (same factor, since it is knots integrated over hours).
+                if col in KNOT_DAYFILE_COLS:
+                    v *= KNOTS_TO_MPH
+                values[col] = v
         present = [c for c in cols if c in values]
         placeholders = ",".join("?" * (len(present) + 2))
         conn.execute(

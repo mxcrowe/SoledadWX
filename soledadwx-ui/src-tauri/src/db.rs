@@ -211,7 +211,7 @@ pub fn status() -> Result<DbStatus, rusqlite::Error> {
 
     // Cheap archive start from the rollups (95k rows) rather than scanning 17M obs.
     let archive_start: Option<String> = conn
-        .query_row("SELECT MIN(day_utc) FROM daily_rollups", [], |r| r.get(0))
+        .query_row("SELECT MIN(day_local) FROM daily_rollups", [], |r| r.get(0))
         .unwrap_or(None);
 
     Ok(DbStatus {
@@ -251,6 +251,13 @@ pub struct RangeStats {
     pub wind_run_mi: Option<f64>,
 }
 
+/// "YYYY-MM-DD" -> a sortable integer key.
+///
+/// NOTE: rollup days are CIVIL LOCAL dates (see build_rollups.py), but both
+/// this and the `strftime('%s', r.day_local)` in the queries below stamp the
+/// bare date at UTC midnight. That is deliberate: the two sides share one
+/// naive convention, so the value is a comparable KEY, not a real instant.
+/// Never feed the result to anything that treats it as a true timestamp.
 fn parse_day(s: &str) -> Result<i64, String> {
     chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
         .map_err(|e| e.to_string())
@@ -263,13 +270,13 @@ pub fn series_daily(metric: &str, start: &str, end: &str) -> Result<Vec<SeriesPo
     let (a, b) = (parse_day(start)?, parse_day(end)?);
     let mut stmt = conn
         .prepare(
-            "SELECT strftime('%s', r.day_utc), r.avg_value, r.min_value, r.max_value, r.n_samples
+            "SELECT strftime('%s', r.day_local), r.avg_value, r.min_value, r.max_value, r.n_samples
              FROM daily_rollups r
              JOIN metrics m ON m.id = r.metric_id
              WHERE m.name = ?1
-               AND strftime('%s', r.day_utc) + 0 >= ?2
-               AND strftime('%s', r.day_utc) + 0 < ?3
-             ORDER BY r.day_utc",
+               AND strftime('%s', r.day_local) + 0 >= ?2
+               AND strftime('%s', r.day_local) + 0 < ?3
+             ORDER BY r.day_local",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
@@ -299,8 +306,8 @@ pub fn range_stats(metric: &str, start: &str, end: &str) -> Result<RangeStats, S
              FROM daily_rollups r
              JOIN metrics m ON m.id = r.metric_id
              WHERE m.name = ?1
-               AND strftime('%s', r.day_utc) + 0 >= ?2
-               AND strftime('%s', r.day_utc) + 0 < ?3",
+               AND strftime('%s', r.day_local) + 0 >= ?2
+               AND strftime('%s', r.day_local) + 0 < ?3",
             rusqlite::params![metric, a, b],
             |r| {
                 Ok((
@@ -321,8 +328,8 @@ pub fn range_stats(metric: &str, start: &str, end: &str) -> Result<RangeStats, S
         conn.query_row(
             &format!(
                 "SELECT {col} FROM daily_rollups r JOIN metrics m ON m.id=r.metric_id
-                 WHERE m.name=?1 AND strftime('%s',r.day_utc)+0 >= ?2
-                   AND strftime('%s',r.day_utc)+0 < ?3 AND {vcol} = ?4
+                 WHERE m.name=?1 AND strftime('%s',r.day_local)+0 >= ?2
+                   AND strftime('%s',r.day_local)+0 < ?3 AND {vcol} = ?4
                  LIMIT 1",
                 col = col,
                 vcol = if col == "ts_min" { "r.min_value" } else { "r.max_value" }
@@ -753,7 +760,7 @@ fn day_ext(conn: &Connection, metric: &str, expr: &str, want_max: bool) -> Optio
     let ord = if want_max { "DESC" } else { "ASC" };
     conn.query_row(
         &format!(
-            "SELECT {expr} AS v, r.day_utc FROM daily_rollups r
+            "SELECT {expr} AS v, r.day_local FROM daily_rollups r
              JOIN metrics m ON m.id = r.metric_id
              WHERE m.name = ?1 ORDER BY v {ord} LIMIT 1"
         ),

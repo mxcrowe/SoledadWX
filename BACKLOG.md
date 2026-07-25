@@ -29,6 +29,21 @@ while for context, then prune). Newest context at the bottom of each item.
   clear-sky ratio). Document this in ARCHITECTURE.md alongside the unit-quirks
   section. *(Found Jul 8 2026; see scratchpad/solar_decay.py.)*
 
+- [ ] **Wind Run from rollups is `avg x 24` — fragile on unevenly-sampled days.**
+  `db::range_stats` computes wind run as `SUM(avg_value * 24.0)`, which assumes
+  the day's samples are an unbiased 24 h mean. Sample density varies wildly by
+  era (2014-02-28: 99 samples; 2023-02-22: 118; 2021-01-25: 287), so a day whose
+  samples cluster during the windy hours is over-credited. Sanity check: MXC's
+  Cumulus-validated record, 210.3 mi on 2014-02-28, reproduces here as 208.2 mi
+  (avg 8.674 x 24) — good to ~1%, so the method is roughly right but the RANKING
+  across eras is not trustworthy. Fix: integrate wind run over time (trapezoidal,
+  gap-capped) exactly like `solar_energy_kwh` does, instead of `avg x 24`; and/or
+  require a minimum sample count / coverage fraction before a day can hold a
+  record. *(Found Jul 24 2026 during the day-boundary recast.)*
+  NOT a unit bug — `import_mdb.py` uses the correct `MS_TO_MPH = 2.2369362920544`
+  (a suspicious-looking value, 9.84251968503936, is just 4.4 m/s converted; it
+  coincidentally equals 3.0 x 3.28084, which briefly looked like a ft/mph mixup).
+
 ## Instrument / sensor health
 
 - [ ] **★ Solar sensor blocked at HIGH sun angles (Jul 8 2026, refined dx).**
@@ -75,6 +90,14 @@ while for context, then prune). Newest context at the bottom of each item.
   obstruction monitor. Lives on the future Charts surface or a health corner.
   *Current state:* `CLEAR_FRACTION` hard-set to 0.83 — NOTE this is now known to
   be corrupted by shading and is not a clean atmosphere+sensor figure.
+  *Reference clear days (calibration anchors):*
+  - **Jul 24 2026** — cloudless from sunrise, clear all day (MXC).
+    Caveat: air noticeably THICKER/hazier than typical San Diego, so true GHI
+    is depressed atmospherically — a low "% of clear day" today is NOT proof of
+    sensor decay. To separate the two effects, do the three-way compare after
+    sunset: our sensor → neighbor KCASANDI354 (= instrument penalty) → R-S
+    clear-sky model (= atmospheric thickness). Judge on MIDDAY hours (our sensor
+    flatters at low sun). Use to check whether `SOLAR_CLEAR_CAPTURE=0.62` holds.
 
 - [ ] **Photocell wipe experiment** (secondary now that shading is the prime
   suspect). MXC to clean the WS-1002 solar dome (headlight cleaner). Log date;
