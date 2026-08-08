@@ -85,6 +85,32 @@ while for context, then prune). Newest context at the bottom of each item.
   dewpointf, heatindexf, feelslikef) from records/climatology, or flag them.
   Do NOT delete — label. Michael's rule: hold extremes loosely, keep the data.
 
+  **QUANTIFIED against MSDSD (Aug 7 2026).** MSDSD (source 8, Mt Soledad
+  mesonet, 559 m away, 10-min cadence, 2011-09-28 → 2018-08-31) is now imported
+  and gives us the witness this era never had. Temperature acts as the control:
+  Zephyr runs a steady **+1.1 to +2.2 °F** warmer than MSDSD in EVERY year
+  (consistent with the 187 ft elevation difference), while humidity swings
+  across 58 points. Same air mass, so the humidity error is purely instrumental.
+
+      year  temp diff   RH diff
+      2011    +2.2       +13.7   too WET
+      2012    +1.6       +12.1
+      2013    +1.6        +8.7
+      2014    +1.3        +4.5
+      2015    +1.6       -27.9   dry failure begins (Dec 2015)
+      2016    +1.4       -44.2   catastrophic (May-Oct: -54 to -64)
+      2017    +1.7        +4.1   NEW SENSOR
+      2018    +1.1       +11.0   degrading again
+
+  **Hygrometer replaced NOVEMBER 2016** — dated from the data, not memory:
+  Oct 2016 -54.3 → Nov 2016 -14.0 → Dec 2016 -1.9 → Jan 2017 -0.3.
+  MXC could not recall the date; the artifact dated its own repair.
+
+  **Healthy agreement = ±2 points.** Dec 2016-Jun 2017 sits within ±2.5, which
+  is the yardstick for flagging every other era — no guessing needed.
+  Usable-as-is: roughly 2014 and Dec 2016 → mid-2017. Everything else needs a
+  flag. NOTE 2009 → Sep 2011 predates MSDSD and remains unwitnessed.
+
 - [ ] **Plausibility gate for humidity-derived values.** Reject/flag any derived
   reading whose implied dew point exceeds what this coast can produce (La Jolla
   has never seen a dew point near 91 F; the marine layer tops out in the low
