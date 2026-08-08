@@ -45,9 +45,44 @@ pub fn db_path() -> PathBuf {
     PathBuf::from("../../data/soledadwx.db")
 }
 
+/// NWS wind chill (°F). Defined only for T <= 50 °F and wind > 3 mph.
+///
+/// AmbientWeather does not transmit wind chill or heat index — it sends only
+/// `feelsLike` — so the archive had no way to record them and the all-time
+/// "Lowest wind chill" / "Highest heat index" records were frozen from the
+/// moment the live recorder became the current-era source. We derive them
+/// here instead. Must stay bit-for-bit identical to windChillF() in
+/// src/astro.ts, or the Console and the archive will disagree.
+fn wind_chill_f(temp_f: Option<f64>, wind_mph: Option<f64>) -> Option<f64> {
+    let (t, w) = (temp_f?, wind_mph?);
+    if t > 50.0 || w <= 3.0 {
+        return None;
+    }
+    let v = w.powf(0.16);
+    Some(35.74 + 0.6215 * t - 35.75 * v + 0.4275 * t * v)
+}
+
+/// NWS heat index (°F, Rothfusz regression). Defined only for T >= 80 °F.
+/// Mirrors heatIndexF() in src/astro.ts — keep the two in step.
+fn heat_index_f(temp_f: Option<f64>, rh: Option<f64>) -> Option<f64> {
+    let (t, r) = (temp_f?, rh?);
+    if t < 80.0 {
+        return None;
+    }
+    let mut hi = -42.379 + 2.04901523 * t + 10.14333127 * r - 0.22475541 * t * r
+        - 0.00683783 * t * t - 0.05481717 * r * r + 0.00122874 * t * t * r
+        + 0.00085282 * t * r * r - 0.00000199 * t * t * r * r;
+    if r < 13.0 && t <= 112.0 {
+        hi -= ((13.0 - r) / 4.0) * ((17.0 - (t - 95.0).abs()) / 17.0).sqrt();
+    } else if r > 85.0 && t <= 87.0 {
+        hi += ((r - 85.0) / 10.0) * ((87.0 - t) / 5.0);
+    }
+    Some(hi)
+}
+
 // Canonical metric name -> value for one reading. Shared by the live
 // recorder and the backfill so both map fields identically.
-fn value_pairs(r: &AmbientReading) -> [(&'static str, Option<f64>); 21] {
+fn value_pairs(r: &AmbientReading) -> [(&'static str, Option<f64>); 23] {
     [
         ("tempf", r.tempf),
         ("humidity", r.humidity.map(f64::from)),
@@ -70,6 +105,11 @@ fn value_pairs(r: &AmbientReading) -> [(&'static str, Option<f64>); 21] {
         ("feelslikef", r.feelsLike),
         ("dewpointinf", r.dewPointin),
         ("feelslikeinf", r.feelsLikein),
+        // Derived, not transmitted — see wind_chill_f / heat_index_f above.
+        // None outside their valid range, so nothing is written on a mild day
+        // (empty != zero: a 0 here would be a fictitious reading).
+        ("windchillf", wind_chill_f(r.tempf, r.windspeedmph)),
+        ("heatindexf", heat_index_f(r.tempf, r.humidity.map(f64::from))),
     ]
 }
 
@@ -123,6 +163,10 @@ impl Recorder {
             ("feelslikef", "F", "Feels like"),
             ("dewpointinf", "F", "Indoor dew point"),
             ("feelslikeinf", "F", "Indoor feels like"),
+            // Derived here rather than transmitted; ids already exist from the
+            // Cumulus/MDB importers, so INSERT OR IGNORE resolves to those.
+            ("windchillf", "F", "Wind chill"),
+            ("heatindexf", "F", "Heat index"),
         ];
         let mut metric_ids = HashMap::new();
         for (name, unit, label) in metric_defs {

@@ -64,6 +64,34 @@ while for context, then prune). Newest context at the bottom of each item.
   Hypothesis tested and REJECTED: mast wobble inflating gusts pre-guy-wires.
   The apparent 2022/23 step is entirely a source changeover, not a repair date.
 
+- [ ] **★ Zephyr-era HUMIDITY is broadly untrustworthy — and it propagates.**
+  MXC (Aug 7 2026): the old station's hygrometer "saturated out", gave rail
+  readings, got progressively worse, and was eventually replaced. Confirmed and
+  quantified in the archive (source 1, metric 2). Mean RH by calendar month:
+      healthy (src 2/3/7, 2019+)  Jan 66 -> Jul 84 -> Dec 72   (true marine curve)
+      Zephyr 2011-2014            Jan 56 -> Jul 96 -> Dec 67   (~+10 pts, right shape)
+      Zephyr Mar-Oct 2016         12 - 23 all months           (CATASTROPHIC, ~60 pts dry)
+      Zephyr 2018                 Jan 62 -> Jul 93             (railing, worst at the end)
+  Signature: monthly MAX is pinned at exactly 99.0 in every month EXCEPT
+  Apr-Oct 2016 (max varies 62-84) — i.e. a hard ceiling rail most of the time,
+  and a separate dry-failure episode in 2016. Share of readings >=95% RH climbs
+  5% (2009) -> 81% (2012) -> 78% (mid-2018).
+  **Propagation is the real damage:** dewpointf, heatindexf and feelslikef for
+  that era are all DERIVED from this humidity, so they inherit the fault. The
+  all-time "Highest heat index" record of 138.7 F (2012-09-14) is exactly this:
+  Cumulus faithfully computed Rothfusz from 92.1 F / 96% RH, implying a ~91 F
+  dew point that this coast has never produced.
+  Decision needed: exclude source 1 humidity-derived metrics (humidity,
+  dewpointf, heatindexf, feelslikef) from records/climatology, or flag them.
+  Do NOT delete — label. Michael's rule: hold extremes loosely, keep the data.
+
+- [ ] **Plausibility gate for humidity-derived values.** Reject/flag any derived
+  reading whose implied dew point exceeds what this coast can produce (La Jolla
+  has never seen a dew point near 91 F; the marine layer tops out in the low
+  70s). Cheap guard that would retire the 138.7 F heat index automatically and
+  catch the next sensor failure early. Ties to the clear-sky envelope tracker
+  idea — same "watch for the instrument drifting" family.
+
 ## Instrument / sensor health
 
 - [ ] **★ Solar sensor blocked at HIGH sun angles (Jul 8 2026, refined dx).**
