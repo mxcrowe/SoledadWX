@@ -61,13 +61,22 @@ def c_to_f(v: float) -> float:
     return v * 9.0 / 5.0 + 32.0
 
 
-# CSV column -> (canonical metric, converter)
+# CSV column -> (canonical metric, converter).
+# Exports vary by date range — MesoWest emits only the columns you tick, and
+# the station reports fewer variables than the portal lists (pressure and
+# solar_radiation come back 0.0% filled: phantom columns). Unknown or absent
+# columns are simply skipped, so one map serves every export.
 COLUMN_MAP = {
     "air_temp_set_1": ("tempf", c_to_f),
     "dew_point_temperature_set_1d": ("dewpointf", c_to_f),
     "relative_humidity_set_1": ("humidity", float),
     "wind_speed_set_1": ("windspeedmph", lambda v: v * MS_TO_MPH),
     "wind_direction_set_1": ("winddir", float),
+    "wind_gust_set_1": ("windgustmph", lambda v: v * MS_TO_MPH),
+    # Empty for MSDSD, mapped for the next station that does report them.
+    "pressure_set_1": ("baromabsin", lambda v: v * 0.000295299830714),
+    "pressure_set_1d": ("baromrelin", lambda v: v * 0.000295299830714),
+    "solar_radiation_set_1": ("solarradiation", float),
 }
 
 # Same spirit as the other importers: reject physically impossible values
@@ -77,7 +86,11 @@ BOUNDS = {
     "dewpointf": (-40.0, 100.0),
     "humidity": (1.0, 100.0),
     "windspeedmph": (0.0, 150.0),
+    "windgustmph": (0.0, 200.0),
     "winddir": (0.0, 360.0),
+    "baromabsin": (27.0, 32.0),
+    "baromrelin": (27.0, 32.0),
+    "solarradiation": (0.0, 1500.0),
 }
 
 

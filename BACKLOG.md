@@ -118,6 +118,28 @@ while for context, then prune). Newest context at the bottom of each item.
   catch the next sensor failure early. Ties to the clear-sky envelope tracker
   idea — same "watch for the instrument drifting" family.
 
+- [ ] **★ Gap-fill by source_priority is broken by design — it is ADDITIVE, not
+  substitutive.** `canonical_observations` partitions by exact `ts_utc`, so
+  priority only chooses between sources sharing an IDENTICAL timestamp. Sources
+  on different clocks (MSDSD on clean 10-min marks, Cumulus on ~20-min, WU
+  irregular) essentially never collide, so the rank is never consulted and
+  EVERY row of the lower-priority source is added to canonical.
+  Demonstrated Aug 7 2026: adding msdsd priority rows (ranked LAST, 6/9/11)
+  pulled ~250k rows/yr into canonical for 2011-2018 and:
+      - MSDSD supplied 65-75% of all daily MINIMA (it runs 1-2 F cooler,
+        so it wins nearly every night)
+      - daily MEAN temp shifted -0.46 to -1.52 F across 2011-2017
+  i.e. it quietly cooled seven years of climatology to gain 27 days. Reverted;
+  msdsd priority rows deleted and it is now pure reference data (0 canonical).
+  **This is not hypothetical elsewhere:** the pre-existing wu_ksandi84 (2014)
+  and wu_ksandi354 (2016) rows do the same thing, warming those years by
+  +0.24 and +0.63 F respectively. Still present — decide what to do.
+  Proper fix: fallback must be evaluated over an INTERVAL, not a timestamp —
+  use a secondary source only across spans where the primary is silent for
+  more than N minutes (resample to a common grid, or a "coverage window"
+  join). Until then, do NOT add priority rows for a source on a different
+  sampling grid.
+
 ## Instrument / sensor health
 
 - [ ] **★ Solar sensor blocked at HIGH sun angles (Jul 8 2026, refined dx).**
