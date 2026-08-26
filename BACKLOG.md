@@ -54,7 +54,7 @@ while for context, then prune). Newest context at the bottom of each item.
   What made it decidable: MXC put a SECOND, unrelated hygrometer in the back
   yard and it fell too. Four independent instruments (outdoor array, console
   indoor sensor at dead-constant 82.2 F indoor temp, pyranometer, backyard
-  unit). No firmware, mount or電 path in common.
+  unit). No firmware, mount or power path in common.
   The structure, from MXC reading the WU map: a north-south DRY LINE parked on
   the ridge. Everything west of the station >=60% RH; many stations east
   40-50%. Neighbour DEWPOINTS 70-76 F while ours read 61 F. MSDSD, 559 m away
