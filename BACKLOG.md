@@ -61,6 +61,41 @@ while for context, then prune). Newest context at the bottom of each item.
   source boundary is a data artifact, not weather, and the chart currently
   gives no hint).
 
+- [ ] **★ ZEPHYR HUMIDITY IS NOT RECOVERABLE — diagnosis corrected 2026-08-26.**
+  Supersedes the "slope error, therefore invertible" reading recorded earlier
+  the same day. That was wrong, and the way it was wrong is worth keeping.
+  The raw values: the sensor spent most of its life PINNED at exactly 99 or
+  exactly 10. Share of all readings at the modal value —
+      2011 99%: 59%   2012 99%: **81%**   2013 99%: 69%   2014 99%: 60%
+      2015 10%: 53%   2016 10%: **64%**   2017 99%: 32%   2018 99%: 58%
+  That is saturation, which destroys information irreversibly. MXC said so in
+  the first place ("saturated out ... readings of 0 or 100, as I recall") and
+  was right to within the rail values.
+  **How the wrong diagnosis happened, because the trap is reusable:** binning
+  the error by MSDSD's RH and averaging turns "pinned at 99 while the truth
+  was 70" into a tidy "+21 points in the 70-80 bin", which looks exactly like
+  a slope. Aggregation manufactured a smooth, invertible-looking curve out of
+  a hard rail. **Check the MODE and the rail occupancy before believing any
+  binned bias curve.**
+  `scripts/calibrate_zephyr_humidity.py` was built to do the correction and
+  instead measured its impossibility: month-by-month it refuses on pair
+  count, Pearson r vs MSDSD, Zephyr's own IQR, tied interior quantile knots,
+  and a post-hoc check that the corrected monthly mean lands near MSDSD's
+  mean plus the healthy-window site difference. Verdict: **13 of 84 months
+  recoverable, 71 refused** — and 12 of the 13 are Dec 2016-Aug 2018 where the
+  replacement sensor was already healthy and the correction is +/-2 points.
+  Only Dec 2017-Feb 2018 gain anything real (-8 to -11.5).
+  **Decision: do NOT write the corrected source.** Three useful months do not
+  justify a second humidity source and the confusion it would cause. Keep the
+  script — it is the instrument that measures recoverability, and it will be
+  the right tool the day another sensor degrades gracefully instead of
+  railing.
+  **Do this instead: the `quality_flag` column.** 2011-2016 humidity, and
+  everything derived from it (dewpointf, heatindexf, apparenttempf, humidexf,
+  wetbulbf for source 1), should be flagged unusable and shown as such rather
+  than silently plotted. That is now the highest-value data-integrity task in
+  the backlog.
+
 - [ ] **★ EVENT LOG — the dry line of 2026-08-26 (~15:17 PDT).** Observed live
   by MXC and reconstructed as it happened. Worth keeping because the archive
   cannot reproduce the part that mattered.
