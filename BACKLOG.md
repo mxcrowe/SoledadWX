@@ -44,6 +44,51 @@ while for context, then prune). Newest context at the bottom of each item.
   (a suspicious-looking value, 9.84251968503936, is just 4.4 m/s converted; it
   coincidentally equals 3.0 x 3.28084, which briefly looked like a ft/mph mixup).
 
+- [ ] **★ EVENT LOG — the dry line of 2026-08-26 (~15:17 PDT).** Observed live
+  by MXC and reconstructed as it happened. Worth keeping because the archive
+  cannot reproduce the part that mattered.
+  What the station saw: RH 68 -> 40% and dewpoint 71.8 -> 58.5 F in 28 min,
+  temperature RISING through it (83.8 -> 86.4), wind steady W/WNW the whole
+  time, solar collapsing 564 -> 110 W/m**2 in three minutes. RH then held a
+  noisy 39-44% band for 40+ min rather than railing.
+  What made it decidable: MXC put a SECOND, unrelated hygrometer in the back
+  yard and it fell too. Four independent instruments (outdoor array, console
+  indoor sensor at dead-constant 82.2 F indoor temp, pyranometer, backyard
+  unit). No firmware, mount or電 path in common.
+  The structure, from MXC reading the WU map: a north-south DRY LINE parked on
+  the ridge. Everything west of the station >=60% RH; many stations east
+  40-50%. Neighbour DEWPOINTS 70-76 F while ours read 61 F. MSDSD, 559 m away
+  on essentially the same meridian but **187 ft LOWER**, read 83% RH — below
+  the boundary, still in marine air. The station sits exactly on the edge of
+  the feature, which is the one place a single station looks broken and is in
+  fact most informative.
+  Precedent: this signature (dewpoint <=-8F/30min, temp rising, wind W-NW,
+  afternoon) has 191 days since 2019 — but 147 of them are Oct-Mar. August
+  has FIVE in seven years. The mechanism is a normal cold-season behaviour of
+  this ridge; what is anomalous is the date, mid-way through the most humid
+  August stretch in the modern record. MXC's instinct ("it can happen here,
+  but only in Santa Ana conditions") is well calibrated.
+  Two wrong turns worth remembering: (1) Fathom argued sensor-vs-weather from
+  RH and DEWPOINT as if they were two witnesses — they are one, the station
+  derives dewpoint from temp+RH. (2) Fathom misread a WU map whose big number
+  was DEWPOINT as temperature, concluded the thermometer was failing, and had
+  to retract — MXC had said "we are the 60F dewpoint" in the same message.
+  Read the human before the pixels.
+
+- [ ] **★ THE ARCHIVE HAS NO SPATIAL CONTEXT, and today it cost us.** Every
+  question this event raised — is it the sensor, where is the boundary, which
+  side are we on — is a one-query answer with neighbour data and a guess
+  without it. We hold 3.8M MSDSD rows but they are HAND-PULLED and were 19
+  days stale at the moment we needed them; the WU neighbour sources (9/10/11)
+  are staler still. Concrete asks, in value order:
+    1. Automate the MSDSD pull (Synoptic 403s the SDG&E network — investigate
+       a key, or scrape the same CSV endpoint the portal uses).
+    2. Live-poll 3-6 WU neighbour PWSs, spanning the ridge E-W so the archive
+       can see a gradient rather than a point.
+    3. A "neighbourhood" panel: our reading vs the local median, flagged when
+       we sit outside the spread. That panel would have answered the question
+       in one glance instead of an hour.
+
 - [ ] **★ THE ISOLATED-RECORD TEST — plausibility as a first-class signal.**
   MXC (Aug 26 2026): "52 kt over Mt Soledad sticks out like a sore thumb, and
   if 76 kt had really happened we'd *still* be cleaning up from it." He is
