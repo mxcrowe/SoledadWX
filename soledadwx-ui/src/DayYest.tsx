@@ -79,6 +79,8 @@ export default function DayYest() {
   const m = (name: string) => d.metrics.find(x => x.metric === name);
   const tempf = m("tempf"), dew = m("dewpointf"), hum = m("humidity");
   const baro = m("baromrelin"), spd = m("windspeedmph"), gust = m("windgustmph");
+  const at = m("apparenttempf"), hx = m("humidexf"), wb = m("wetbulbf");
+  const hidx = m("heatindexf"), wc = m("windchillf");
   const rate = m("rainratein"), rain = m("dailyrainin"), solar = m("solarradiation"), uv = m("uv");
   const range = (s?: DayStat) =>
     s && s.high.value != null && s.low.value != null ? s.high.value - s.low.value : null;
@@ -138,6 +140,26 @@ export default function DayYest() {
           <StatRow label="Low humidity" unit="%" dp={0}
             today={hum?.today.low.value ?? null} todayTs={hum?.today.low.ts}
             yest={hum?.yesterday.low.value ?? null} yestTs={hum?.yesterday.low.ts} />
+
+          <GroupHead title="Apparent temperature" />
+          <StatRow label="High apparent temp" unit="°F"
+            today={at?.today.high.value ?? null} todayTs={at?.today.high.ts}
+            yest={at?.yesterday.high.value ?? null} yestTs={at?.yesterday.high.ts} />
+          <StatRow label="Low apparent temp" unit="°F"
+            today={at?.today.low.value ?? null} todayTs={at?.today.low.ts}
+            yest={at?.yesterday.low.value ?? null} yestTs={at?.yesterday.low.ts} />
+          <StatRow label="Highest humidex" unit="°F"
+            today={hx?.today.high.value ?? null} todayTs={hx?.today.high.ts}
+            yest={hx?.yesterday.high.value ?? null} yestTs={hx?.yesterday.high.ts} />
+          <StatRow label="Highest wet bulb" unit="°F"
+            today={wb?.today.high.value ?? null} todayTs={wb?.today.high.ts}
+            yest={wb?.yesterday.high.value ?? null} yestTs={wb?.yesterday.high.ts} />
+          <StatRow label="Highest heat index" unit="°F"
+            today={hidx?.today.high.value ?? null} todayTs={hidx?.today.high.ts}
+            yest={hidx?.yesterday.high.value ?? null} yestTs={hidx?.yesterday.high.ts} />
+          <StatRow label="Lowest wind chill" unit="°F"
+            today={wc?.today.low.value ?? null} todayTs={wc?.today.low.ts}
+            yest={wc?.yesterday.low.value ?? null} yestTs={wc?.yesterday.low.ts} />
 
           <GroupHead title="Wind" />
           <StatRow label="Highest gust" unit={WIND_UNIT}

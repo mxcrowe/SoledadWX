@@ -115,6 +115,57 @@ export function heatIndexF(tempF?: number, rh?: number): number | null {
   return hi;
 }
 
+const satVpHpa = (tc: number) => 6.112 * Math.exp((17.67 * tc) / (tc + 243.5));
+
+/**
+ * Australian BOM apparent temperature (°F). The only moist-heat measure
+ * defined at EVERY temperature — heat index quits below 80 °F and wind chill
+ * above 50 °F, leaving a 30-degree hole that covers most of a San Diego year
+ * — and the only one that accounts for wind as well as moisture. Missing
+ * wind is treated as calm, not as missing data.
+ * Must stay bit-for-bit identical to apparent_temp_f() in src-tauri/src/db.rs.
+ */
+export function apparentTempF(tempF?: number, rh?: number, windMph?: number): number | null {
+  if (tempF == null || rh == null) return null;
+  const wMs = (windMph ?? 0) * 0.44704;
+  const tc = ((tempF - 32) * 5) / 9;
+  const e = (rh / 100) * satVpHpa(tc);
+  return ((tc + 0.33 * e - 0.7 * wMs - 4.0) * 9) / 5 + 32;
+}
+
+/**
+ * Humidex (°F-equivalent). Null below a 10 °C dewpoint, per Environment
+ * Canada — below that the moisture term would subtract, which humidex does
+ * not claim to model. Mirrors humidex_f() in db.rs.
+ */
+export function humidexF(tempF?: number, dewF?: number): number | null {
+  if (tempF == null || dewF == null) return null;
+  const dc = ((dewF - 32) * 5) / 9;
+  if (dc < 10) return null;
+  const tc = ((tempF - 32) * 5) / 9;
+  const e = 6.11 * Math.exp(5417.753 * (1 / 273.16 - 1 / (dc + 273.15)));
+  return ((tc + 0.5555 * (e - 10)) * 9) / 5 + 32;
+}
+
+/**
+ * Wet-bulb temperature (°F), Stull (2011). Not a comfort index — it is the
+ * physical floor of evaporative cooling, i.e. what actually limits how well
+ * a body sheds heat. Valid ~5-99% RH and -20..50 °C; null outside.
+ * Mirrors wet_bulb_f() in db.rs.
+ */
+export function wetBulbF(tempF?: number, rh?: number): number | null {
+  if (tempF == null || rh == null || rh < 5 || rh > 99) return null;
+  const tc = ((tempF - 32) * 5) / 9;
+  if (tc < -20 || tc > 50) return null;
+  const wb =
+    tc * Math.atan(0.151977 * Math.sqrt(rh + 8.313659)) +
+    Math.atan(tc + rh) -
+    Math.atan(rh - 1.676331) +
+    0.00391838 * Math.pow(rh, 1.5) * Math.atan(0.023101 * rh) -
+    4.686035;
+  return (wb * 9) / 5 + 32;
+}
+
 const ELEV_M = 159; // station altitude (522 ft) for the air-mass term
 
 /** Sun's altitude above the horizon, degrees (NOAA approximation, ~0.5°). */

@@ -80,9 +80,76 @@ fn heat_index_f(temp_f: Option<f64>, rh: Option<f64>) -> Option<f64> {
     Some(hi)
 }
 
+/// Saturation vapour pressure (hPa) from temperature (°C) — Tetens/Magnus.
+/// Shared by the three moist-heat measures below.
+fn sat_vp_hpa(tc: f64) -> f64 {
+    6.112 * ((17.67 * tc) / (tc + 243.5)).exp()
+}
+
+/// Australian BOM apparent temperature (°F).
+///
+/// The one moist-heat measure that is defined at EVERY temperature: heat
+/// index gives up below 80 °F and wind chill above 50 °F, which leaves a
+/// 30-degree hole covering most of a San Diego year. AT fills it, and it is
+/// the only one of the three that accounts for wind as well as moisture, so
+/// it is the honest headline number for a coastal site.
+///
+/// AT = Ta + 0.33*e - 0.70*ws - 4.00, with e the actual vapour pressure
+/// (hPa) and ws the wind speed in m/s at 10 m. Mirrors apparentTempF() in
+/// src/astro.ts — keep the two in step.
+fn apparent_temp_f(temp_f: Option<f64>, rh: Option<f64>, wind_mph: Option<f64>) -> Option<f64> {
+    let (t, r) = (temp_f?, rh?);
+    // Wind is required by the formula; treat a missing anemometer as calm
+    // rather than discarding the reading, and say so here so nobody later
+    // mistakes a still day for a broken one.
+    let w_ms = wind_mph.unwrap_or(0.0) * 0.44704;
+    let tc = (t - 32.0) * 5.0 / 9.0;
+    let e = (r / 100.0) * sat_vp_hpa(tc);
+    let at_c = tc + 0.33 * e - 0.70 * w_ms - 4.00;
+    Some(at_c * 9.0 / 5.0 + 32.0)
+}
+
+/// Humidex (°F-equivalent). Canadian moist-heat index — temperature plus a
+/// dewpoint-driven term, no wind. Undefined (returns None) when the moisture
+/// term would subtract, i.e. dewpoint below 10 °C, which is Environment
+/// Canada's own convention. Mirrors humidexF() in src/astro.ts.
+fn humidex_f(temp_f: Option<f64>, dew_f: Option<f64>) -> Option<f64> {
+    let (t, d) = (temp_f?, dew_f?);
+    let dc = (d - 32.0) * 5.0 / 9.0;
+    if dc < 10.0 {
+        return None;
+    }
+    let tc = (t - 32.0) * 5.0 / 9.0;
+    let e = 6.11 * (5417.7530 * (1.0 / 273.16 - 1.0 / (dc + 273.15))).exp();
+    let h_c = tc + 0.5555 * (e - 10.0);
+    Some(h_c * 9.0 / 5.0 + 32.0)
+}
+
+/// Wet-bulb temperature (°F), Stull (2011) empirical fit. Valid for roughly
+/// 5-99% RH and -20..50 °C; returns None outside that. Not a comfort index —
+/// it is the physical limit of evaporative cooling, which is what actually
+/// bounds how well a body (or a dog) can shed heat. Mirrors wetBulbF() in
+/// src/astro.ts.
+fn wet_bulb_f(temp_f: Option<f64>, rh: Option<f64>) -> Option<f64> {
+    let (t, r) = (temp_f?, rh?);
+    if !(5.0..=99.0).contains(&r) {
+        return None;
+    }
+    let tc = (t - 32.0) * 5.0 / 9.0;
+    if !(-20.0..=50.0).contains(&tc) {
+        return None;
+    }
+    let wb_c = tc * (0.151977 * (r + 8.313659).sqrt()).atan()
+        + (tc + r).atan()
+        - (r - 1.676331).atan()
+        + 0.00391838 * r.powf(1.5) * (0.023101 * r).atan()
+        - 4.686035;
+    Some(wb_c * 9.0 / 5.0 + 32.0)
+}
+
 // Canonical metric name -> value for one reading. Shared by the live
 // recorder and the backfill so both map fields identically.
-fn value_pairs(r: &AmbientReading) -> [(&'static str, Option<f64>); 23] {
+fn value_pairs(r: &AmbientReading) -> [(&'static str, Option<f64>); 26] {
     [
         ("tempf", r.tempf),
         ("humidity", r.humidity.map(f64::from)),
@@ -110,6 +177,12 @@ fn value_pairs(r: &AmbientReading) -> [(&'static str, Option<f64>); 23] {
         // (empty != zero: a 0 here would be a fictitious reading).
         ("windchillf", wind_chill_f(r.tempf, r.windspeedmph)),
         ("heatindexf", heat_index_f(r.tempf, r.humidity.map(f64::from))),
+        // The apparent-temperature family. AT is defined at all temperatures
+        // and is the only one that sees wind; humidex and wet bulb are the
+        // moisture-only companions. See the helpers above.
+        ("apparenttempf", apparent_temp_f(r.tempf, r.humidity.map(f64::from), r.windspeedmph)),
+        ("humidexf", humidex_f(r.tempf, r.dewPoint)),
+        ("wetbulbf", wet_bulb_f(r.tempf, r.humidity.map(f64::from))),
     ]
 }
 
@@ -167,6 +240,9 @@ impl Recorder {
             // Cumulus/MDB importers, so INSERT OR IGNORE resolves to those.
             ("windchillf", "F", "Wind chill"),
             ("heatindexf", "F", "Heat index"),
+            ("apparenttempf", "F", "Apparent temperature"),
+            ("humidexf", "F", "Humidex"),
+            ("wetbulbf", "F", "Wet bulb"),
         ];
         let mut metric_ids = HashMap::new();
         for (name, unit, label) in metric_defs {
@@ -672,6 +748,10 @@ pub fn day_compare() -> Result<DayCompare, rusqlite::Error> {
     let names = [
         "tempf", "dewpointf", "humidity", "baromrelin", "windspeedmph",
         "windgustmph", "rainratein", "dailyrainin", "solarradiation", "uv",
+        // Derived at record time (see value_pairs) — the apparent-temperature
+        // family plus the two NWS indices, which are None outside their valid
+        // ranges and so simply render as "--" on a mild day.
+        "apparenttempf", "humidexf", "wetbulbf", "heatindexf", "windchillf",
     ];
     let metrics = names
         .iter()
