@@ -848,6 +848,58 @@ pub fn series_hours(metric: &str, hours: i64) -> Result<Vec<SeriesPoint>, String
     Ok(rows)
 }
 
+/// One metric's series over an arbitrary window, at ADAPTIVE resolution.
+///
+/// The existing two series endpoints both quantise away the things worth
+/// looking at: `query_series` returns daily rollups and `series_hours`
+/// buckets to the hour. The dry-line event of 2026-08-26 collapsed the
+/// dewpoint 13 F in 28 minutes and recovered 6 F in seven — at hourly
+/// resolution that is two bars and no story.
+///
+/// So the bucket is chosen from the window, not fixed: short spans return
+/// RAW observations (bucket = 1 s, i.e. no grouping at all), and longer ones
+/// widen only as far as needed to stay under `max_points`. The caller gets
+/// the finest resolution that will actually fit on a screen.
+///
+/// `n` is carried per point so the UI can tell a real reading from a wide
+/// bucket that happens to average to the same value.
+pub fn series_window(
+    metric: &str,
+    start_ts: i64,
+    end_ts: i64,
+    max_points: i64,
+) -> Result<Vec<SeriesPoint>, String> {
+    let conn = Connection::open(db_path()).map_err(|e| e.to_string())?;
+    let span = (end_ts - start_ts).max(1);
+    let cap = max_points.clamp(50, 20_000);
+    // Snap to a human-legible bucket rather than an arbitrary quotient — a
+    // 37-second bucket makes the x-axis lie about where samples fall.
+    const STEPS: [i64; 13] = [1, 60, 300, 600, 900, 1800, 3600, 10800, 21600,
+                              43200, 86400, 604800, 2592000];
+    let want = span / cap;
+    let bucket = *STEPS.iter().find(|&&s| s >= want).unwrap_or(STEPS.last().unwrap());
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT (ts_utc / ?3) * ?3 AS b, AVG(value), MIN(value), MAX(value), COUNT(*)
+             FROM observations
+             WHERE metric_id = (SELECT id FROM metrics WHERE name = ?1)
+               AND ts_utc >= ?2 AND ts_utc <= ?4
+             GROUP BY b ORDER BY b",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(rusqlite::params![metric, start_ts, bucket, end_ts], |r| {
+            Ok(SeriesPoint {
+                t: r.get(0)?, avg: r.get(1)?, min: r.get(2)?, max: r.get(3)?, n: r.get(4)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(rows)
+}
+
 // ---------- Min/Max Records (all-time hall of fame) ----------
 
 #[derive(serde::Serialize)]

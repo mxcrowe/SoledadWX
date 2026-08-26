@@ -19,6 +19,16 @@ fn db_status() -> Result<db::DbStatus, String> {
 }
 
 #[tauri::command]
+fn series_window(
+    metric: String,
+    start_ts: i64,
+    end_ts: i64,
+    max_points: i64,
+) -> Result<Vec<db::SeriesPoint>, String> {
+    db::series_window(&metric, start_ts, end_ts, max_points)
+}
+
+#[tauri::command]
 fn query_series(metric: String, start: String, end: String) -> Result<Vec<db::SeriesPoint>, String> {
     db::series_daily(&metric, &start, &end)
 }
@@ -181,7 +191,7 @@ pub fn run() {
         })
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
-            greet, db_status, query_series, range_stats, console_stats, wind_rose, series_hours,
+            greet, db_status, query_series, series_window, range_stats, console_stats, wind_rose, series_hours,
             records, day_compare
         ])
         .run(tauri::generate_context!())
