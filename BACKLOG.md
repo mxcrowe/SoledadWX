@@ -44,6 +44,23 @@ while for context, then prune). Newest context at the bottom of each item.
   (a suspicious-looking value, 9.84251968503936, is just 4.4 m/s converted; it
   coincidentally equals 3.0 x 3.28084, which briefly looked like a ft/mph mixup).
 
+- [ ] **Charts page — next two steps** (page shipped 2026-08-26, commit 36f13ac:
+  multi-metric overlay, adaptive bucket via `db::series_window`, live tail).
+  Known missing, in order of value:
+    1. **Zoom / brush** — drag a window on the plot. Today you can only pick
+       from preset spans, so you cannot pull out 15:00-16:00 and look at the
+       collapse on its own. `series_window` already accepts arbitrary
+       start/end epochs, so this is UI-only.
+    2. **Historical date picker** — the page is anchored to "now minus N
+       hours" and cannot reach 2019-02-02 or the four other big late-August
+       events. Needed before we can compare tonight's bubbles against
+       2019-08-25's midnight ones, which is the open question from the
+       failed-prediction entry below.
+  Also worth considering once those land: per-trace y-axis labels on hover,
+  and marking source changeovers on the time axis (a trace stepping at a
+  source boundary is a data artifact, not weather, and the chart currently
+  gives no hint).
+
 - [ ] **★ EVENT LOG — the dry line of 2026-08-26 (~15:17 PDT).** Observed live
   by MXC and reconstructed as it happened. Worth keeping because the archive
   cannot reproduce the part that mattered.
