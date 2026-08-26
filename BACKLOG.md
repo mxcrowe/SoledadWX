@@ -44,6 +44,35 @@ while for context, then prune). Newest context at the bottom of each item.
   (a suspicious-looking value, 9.84251968503936, is just 4.4 m/s converted; it
   coincidentally equals 3.0 x 3.28084, which briefly looked like a ft/mph mixup).
 
+- [ ] **★ THE ISOLATED-RECORD TEST — plausibility as a first-class signal.**
+  MXC (Aug 26 2026): "52 kt over Mt Soledad sticks out like a sore thumb, and
+  if 76 kt had really happened we'd *still* be cleaning up from it." He is
+  right, and it generalizes past gust. Cross-source comparison is expensive
+  (needs a witness, and most eras have none); this test needs nothing but the
+  source's own history.
+  The signal is NOT "the value is large" — extreme-value tails are long, and
+  a 3x-median gust is unremarkable. The signal is **a record standing alone
+  above a CROWDED tail.** Real weather stacks up; measured daily peak gust:
+      HP2000 src2   top three days are a 3-way TIE at 34.8 kt, next three tie
+                    at 30.3      -> gap(#1,#2) = 0%      healthy
+      WU src7       52.1, then 43.4, 43.4, 41.2, 41.2, 39.1
+                    -> gap(#1,#2) = +20%, above a dense tail    suspicious
+      MSDSD src8    76.2, then 33.3, 27.9, 27.8, 27.5, 27.1
+                    -> gap(#1,#2) = +129%                       not weather
+  Proposed statistic: gap(#1,#2) divided by the MEDIAN gap over ranks 2..20.
+  Flag when it exceeds ~3. Quantization helps here rather than hurting: unit
+  conversion makes the tail tie a lot, so a real gap is unambiguous.
+  Apply per source, per metric, per season where data allows. Then FLAG, never
+  delete (extremes doctrine) — this is the natural consumer of the
+  `quality_flag` column that is already backlogged.
+  Second, independent leg MXC used and we should encode where we can:
+  **consequence.** A 76 kt gust over La Jolla implies roof damage, downed
+  trees, an NWS storm report. Absence of consequence is evidence. Cheap
+  version: cross-check the top N days per metric against NWS storm events /
+  advisories before granting record status.
+  Why this matters most: it is the ONLY validity test available for the
+  Zephyr era (2009-2018), which has no witness at all for most metrics.
+
 - [ ] **Wind GUST across sources — RESOLVED by MSDSD (Aug 26 2026).** The
   earlier reading of this was backwards. Median daily gust factor
   (peak gust / peak sustained), now with a neutral third party:
