@@ -75,6 +75,44 @@ while for context, then prune). Newest context at the bottom of each item.
   to retract — MXC had said "we are the 60F dewpoint" in the same message.
   Read the human before the pixels.
 
+- [ ] **★ MECHANISM — "dry bubbles": entrainment, and a failed prediction.**
+  MXC's analogy, watching the Aug 26 event unfold on Wundermap: it looks like
+  thermals building over a flat field at sunrise — air pooling in bubbles,
+  building, letting go, rising — except these are bubbles of DRY air drifting
+  through monsoon-moist air. (His father was a free-flight aeromodeller; he
+  has watched streamers show this directly.)
+  That is very likely the same circulation seen from the other end. A thermal
+  reaching the inversion base overshoots, punches into the dry air above, and
+  falls back entraining some of it; compensating subsidence between thermals
+  carries it down in discrete blobs. The updraft half is what streamers show;
+  the downdraft half is what Wundermap shows. Explains the discreteness, the
+  neighbourhood scale, the afternoon timing, the oscillation at a station
+  sitting at the boundary, and the total absence of any wind shift — the
+  exchange is VERTICAL.
+  Supporting: our dewpoint bottomed at 58-61 F while EVERY station on the
+  county map, including the hot inland ones near I-15, held 63-78 F. Air that
+  travels horizontally does not get drier en route; air that descends does.
+  This is what rules out MXC's first thought (dry air pushing in from the
+  east) — inland air had MORE absolute moisture than ours.
+  **★ THE PREDICTION FAILED, and that is the valuable part.** If it were purely
+  thermal-driven, roughness should die at sunset. Hourly dewpoint roughness on
+  the five big late-Aug events: 2025-08-30 and 2020-08-18 do go quiet after
+  dark (fractions of a degree). But **2023-08-29 threw 12.1 F at 18:00 and was
+  still rough at 22:00, and 2019-08-25's LARGEST swing of the day was 13.5 F
+  at 23:00** — no thermals at 11pm. So late-August Mt Soledad appears to have
+  TWO mechanisms wearing the same costume; the nocturnal one is probably the
+  marine layer surging back inland and sloshing its top across our elevation,
+  which needs no sun. Do not let a future session settle on entrainment as
+  the single explanation.
+  **Seasonality:** afternoon dewpoint roughness (max swing in any 30-min
+  window) median 2.5 F over 2,751 days; today 13.3 F = 94th pct overall and
+  **#1 of all 243 August afternoons**. Top four are Aug 25, 26, 29, 30 — the
+  end of the marine season. Watch that window next year.
+  **MXC's open question, partly answered:** "maybe it happens all the time and
+  I'm only seeing it because I'm looking closely?" Both are true. The median
+  afternoon has 2.5 F of this, constantly, and neither of us had ever looked.
+  What is rare is the AMPLITUDE, and today is the record.
+
 - [ ] **★ THE ARCHIVE HAS NO SPATIAL CONTEXT, and today it cost us.** Every
   question this event raised — is it the sensor, where is the boundary, which
   side are we on — is a one-query answer with neighbour data and a guess
