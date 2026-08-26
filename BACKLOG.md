@@ -44,25 +44,45 @@ while for context, then prune). Newest context at the bottom of each item.
   (a suspicious-looking value, 9.84251968503936, is just 4.4 m/s converted; it
   coincidentally equals 3.0 x 3.28084, which briefly looked like a ft/mph mixup).
 
-- [ ] **Wind GUST is not comparable across sources** (same twin as the solar
-  finding). For the SAME physical anemometer in the SAME years, the median
-  gust factor (gust / same-timestamp sustained) is:
-      WU src7      1.78-1.81   (2018-2023, every year)
-      HP2000 src2  1.20-1.22   (2020-2025, every year)
+- [ ] **Wind GUST across sources — RESOLVED by MSDSD (Aug 26 2026).** The
+  earlier reading of this was backwards. Median daily gust factor
+  (peak gust / peak sustained), now with a neutral third party:
+      WU src7      1.91
+      MSDSD src8   1.92   <- independent professional mesonet, 559 m away
+      HP2000 src2  1.22
       Ambient 3/4  1.19-1.21
-  2020, 2022 and 2023 have BOTH paths running simultaneously, so this is a
-  property of the upload path, not of the year, the mast or the weather —
-  WU derives "gust" over a different window than the station's own log.
-  Consequence: the all-time gust record (52.1 kt, 2019-02-02, src7) is not
-  commensurable with the rest of the archive. MXC flagged it on instinct —
-  he knows >30 kt over the house is memorable and 52 kt would be unforgettable.
-  The 2019-02-02 STORM is real (8 of the top 10 gusts, sustained 20-25 kt all
-  afternoon); it is the cross-source comparison that is invalid.
-  Fix: normalize gust by source (as with solar) or exclude WU from gust
-  records. Do NOT "correct" the underlying values — they are each right in
-  their own convention. *(Found Jul 24 2026.)*
+  MSDSD, which has no connection to our upload path, reports the SAME ~1.9
+  gust factor as WU. So ~1.9 is simply what this ridge does, and **src 2/3/4
+  are the outliers** — the station's own logging path under-reports gust
+  relative to sustained. Do not "fix" WU's gust factor; if anything is
+  suspect it is the HP2000/Ambient path. (Caution: src2 daily peak SUSTAINED
+  runs 1.85x MSDSD while its peak GUST runs only 1.15x — its "sustained"
+  column looks max-like, which is probably the whole 1.22 story. Worth a
+  look before trusting src2 sustained.)
+
+- [ ] **The 52.1 kt record (2019-02-02) — real storm, inflated peak.** MSDSD
+  now gives an independent witness: 26.9 kt gust / 14.8 kt sustained that day
+  (a top-2 legitimate day in MSDSD's whole 8-year gust record). Our station
+  normally reads 1.26x MSDSD on daily peak gust; from the SE quarter, where
+  our roof is genuinely more exposed, 1.39x. That day blew from **127 deg**
+  (SE) and our ratio was **1.93 — the single highest of all 122 SE-wind days,
+  99.6th percentile of all 1,379 compared days.**
+  Expected peak given MSDSD and SE exposure: **~37 kt.** MXC's independent
+  recollection is that ~40 kt is the most this house has seen. The 52.1 is
+  ~15 kt above what the day supports.
+  It is NOT a single-sample spike: the whole 14:00-15:00 hour reads 39-52 kt
+  against MSDSD's 23-27 kt, so it is a sustained inflation of a real event,
+  not one bad reading. Cause unknown (mast, exposure, WU's gust window).
+  Suggested action: keep the value, LABEL it (extremes doctrine), and quote
+  the storm as "~37-40 kt" in prose. *(Found Aug 26 2026.)*
   Hypothesis tested and REJECTED: mast wobble inflating gusts pre-guy-wires.
   The apparent 2022/23 step is entirely a source changeover, not a repair date.
+
+- [ ] **MSDSD has its own bad extremes.** Its all-time peak gust is 76.2 kt on
+  2025-06-18 — a day our station recorded 13.0 kt. That is an MSDSD artifact,
+  clean proof that "reference station" does not mean "trustworthy extremes".
+  The extremes doctrine applies to sources we did not install, too. Exclude
+  that day before using MSDSD gust as a yardstick.
 
 - [ ] **★ Zephyr-era HUMIDITY is broadly untrustworthy — and it propagates.**
   MXC (Aug 7 2026): the old station's hygrometer "saturated out", gave rail

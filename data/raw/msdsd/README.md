@@ -26,7 +26,7 @@ different sampling grid silently injects rows rather than filling holes.
 | File | Range | Columns |
 |---|---|---|
 | `MSDSD_2011-09-28_2018-08-31.csv` | 2011-09-28 → 2018-08-31 | temp, dewpoint(d), RH, wind speed, wind dir, solar* |
-| `MSDSD_2018-09-01_2022-12-12.csv` | 2018-09-01 → 2022-12-12 | temp, dewpoint(d), RH, wind speed, wind dir |
+| `MSDSD_2018-09-01_2022-12-12.csv` | 2018-09-01 → 2022-12-12 | temp, dewpoint(d), RH, wind speed, wind dir, **wind gust** |
 | `MSDSD_2022-12-12_2026-08-07.csv` | 2022-12-12 → 2026-08-07 | temp, RH, wind speed, wind dir, **wind gust**, pressure*, solar* |
 
 \* **Phantom columns.** The portal lists variables the station does not
@@ -37,9 +37,7 @@ empty (the useful one is the derived `..._set_1d`). Do not tick them again.
 
 ## Still missing
 
-**Wind gust before 2022-12-12.** The gust column was not ticked on the first
-two exports, so the archive has no independent gust witness for
-**2019-02-02** — the date of the disputed 52.1 kt all-time record (WU gust
-factor 1.79 vs the station's own HP2000 1.22; no tiebreaker exists today).
-Re-pull `2018-09-01 → 2022-12-12` with `Wind Gust`, and optionally
-`2011-09-28 → 2018-08-31` for a longer comparison.
+**Wind gust before 2018-09-01.** Optional, not load-bearing: re-pull
+`2011-09-28 → 2018-08-31` with `Wind Gust` to extend the gust-factor
+comparison back through the Cumulus era. Everything the 2019-02-02 question
+needed is now in hand.
