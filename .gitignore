@@ -67,3 +67,6 @@ HP2000*/
 .env.*
 *.db-wal
 *.db-shm
+
+# Raw source exports (large, reproducible from the MesoWest portal)
+data/raw/**/*.csv
