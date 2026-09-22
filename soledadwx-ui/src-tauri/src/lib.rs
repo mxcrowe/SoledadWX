@@ -1,8 +1,123 @@
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
 use std::env;
-use tauri::{AppHandle, Emitter};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+use std::time::Duration;
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
+
+const MPH_TO_KT: f64 = 0.868_976_241_900_647_9;
+
+/// If the socket is alive but the station has sent no DATA for this long, the
+/// connection is a zombie: it will never error, so the outer reconnect loop
+/// would wait forever. Ambient pushes roughly once a minute, so ten minutes of
+/// silence means something is wrong, not quiet weather. This is the failure
+/// that produced two multi-week holes in the archive.
+const DATA_STALL_SECS: u64 = 600;
+
+/// Set only by the tray's Quit item. Everything else that looks like an exit —
+/// notably closing the dashboard window — must NOT stop the recorder.
+static QUITTING: AtomicBool = AtomicBool::new(false);
+
+/// What the tray tooltip reports. Deliberately small and lock-light: the
+/// websocket task writes it, a timer task reads it.
+struct LiveState {
+    last_data_epoch: Option<i64>,
+    tempf: Option<f64>,
+    humidity: Option<f64>,
+    wind_mph: Option<f64>,
+    recorded: u64,
+    connected: bool,
+}
+
+static LIVE: Mutex<LiveState> = Mutex::new(LiveState {
+    last_data_epoch: None,
+    tempf: None,
+    humidity: None,
+    wind_mph: None,
+    recorded: 0,
+    connected: false,
+});
+
+fn tooltip_text() -> String {
+    let st = match LIVE.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
+    let mut out = String::from("SoledadWX");
+    match (st.tempf, st.humidity) {
+        (Some(t), Some(h)) => out.push_str(&format!("
+{:.1} °F   {:.0}% RH", t, h)),
+        (Some(t), None) => out.push_str(&format!("
+{:.1} °F", t)),
+        _ => {}
+    }
+    if let Some(w) = st.wind_mph {
+        out.push_str(&format!("
+Wind {:.1} kt", w * MPH_TO_KT));
+    }
+    // The line that matters: proof the archive is actually being fed. A stale
+    // age here is the difference between "running" and "recording".
+    match st.last_data_epoch {
+        Some(ts) => {
+            let age = chrono::Utc::now().timestamp() - ts;
+            let ago = if age < 90 {
+                format!("{}s ago", age.max(0))
+            } else if age < 5400 {
+                format!("{} min ago", age / 60)
+            } else {
+                format!("{:.1} h ago", age as f64 / 3600.0)
+            };
+            out.push_str(&format!("
+Last reading {}", ago));
+            if age > DATA_STALL_SECS as i64 {
+                out.push_str("  ⚠");
+            }
+        }
+        None => out.push_str(if st.connected {
+            "
+Connected — awaiting first reading"
+        } else {
+            "
+Not connected"
+        }),
+    }
+    out.push_str(&format!("
+{} readings recorded this session", st.recorded));
+    out
+}
+
+/// Build the dashboard window on demand, or focus it if it already exists.
+///
+/// `tauri.conf.json` declares NO windows on purpose (the JSON schema forbids
+/// comments, so the reason lives here): the app starts as a tray-resident
+/// recorder with no webview at all — about 20 MB — and the ~490 MB of
+/// WebView2 processes measured on 2026-09-21 are only paid while someone is
+/// actually looking at the dashboard.
+///
+/// The window is genuinely destroyed when closed rather than hidden, so the
+/// WebView2 processes (~490 MB, measured) exist only while the dashboard is
+/// open. The recorder runs in its own task and is untouched either way.
+fn open_dashboard(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+        return;
+    }
+    match tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into()))
+        .title("SoledadWX")
+        .inner_size(1800.0, 1150.0)
+        .maximized(true)
+        .build()
+    {
+        Ok(_) => println!("Dashboard window opened."),
+        Err(e) => println!("Could not open dashboard: {:?}", e),
+    }
+}
 
 pub mod db;
 pub mod models;
@@ -78,6 +193,9 @@ async fn run_websocket(app_handle: AppHandle, recorder: &mut Option<db::Recorder
     match connect_async(&ws_url).await {
         Ok((ws_stream, _response)) => {
             println!("WebSocket Handshake successful!");
+            if let Ok(mut g) = LIVE.lock() {
+                g.connected = true;
+            }
             let (mut write, mut read) = ws_stream.split();
 
             println!("Sending Socket.IO connect packet (40)...");
@@ -95,8 +213,35 @@ async fn run_websocket(app_handle: AppHandle, recorder: &mut Option<db::Recorder
                 return;
             }
 
-            // Listen for incoming packets
-            while let Some(msg) = read.next().await {
+            // Listen for incoming packets.
+            //
+            // Two independent stall guards, because a dead Ambient socket does
+            // not error — it simply goes quiet, and the outer reconnect loop
+            // never fires. (1) a hard timeout on ANY frame catches a severed
+            // socket; (2) `last_data` catches the nastier case where the server
+            // keeps answering pings but the station has stopped reporting.
+            let mut last_data = std::time::Instant::now();
+            loop {
+                let next = tokio::time::timeout(
+                    Duration::from_secs(DATA_STALL_SECS),
+                    read.next(),
+                )
+                .await;
+                let msg = match next {
+                    Err(_) => {
+                        println!("No frames for {}s — socket is a zombie, reconnecting.", DATA_STALL_SECS);
+                        break;
+                    }
+                    Ok(None) => break,
+                    Ok(Some(m)) => m,
+                };
+                if last_data.elapsed() > Duration::from_secs(DATA_STALL_SECS) {
+                    println!(
+                        "Socket alive but no station data for {}s — reconnecting.",
+                        DATA_STALL_SECS
+                    );
+                    break;
+                }
                 match msg {
                     Ok(Message::Text(text)) => {
                         if text == "2" {
@@ -130,6 +275,17 @@ async fn run_websocket(app_handle: AppHandle, recorder: &mut Option<db::Recorder
                                             }
                                         }
 
+                                        // Feed the tray tooltip and reset the
+                                        // data-stall clock.
+                                        last_data = std::time::Instant::now();
+                                        if let Ok(mut g) = LIVE.lock() {
+                                            g.last_data_epoch = Some(chrono::Utc::now().timestamp());
+                                            g.tempf = reading.tempf;
+                                            g.humidity = reading.humidity.map(f64::from);
+                                            g.wind_mph = reading.windspeedmph;
+                                            g.recorded += 1;
+                                        }
+
                                         // Emit it over the bridge to React!
                                         if let Err(e) = app_handle.emit("weather-reading", reading) {
                                             println!("Failed to emit to frontend: {:?}", e);
@@ -152,6 +308,9 @@ async fn run_websocket(app_handle: AppHandle, recorder: &mut Option<db::Recorder
         Err(e) => {
             println!("Failed to connect: {:?}", e);
         }
+    }
+    if let Ok(mut g) = LIVE.lock() {
+        g.connected = false;
     }
 }
 
@@ -180,6 +339,51 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             println!("Starting SoledadWX backend...");
+
+            // ---- Tray: the app's actual face. There is no window at startup.
+            let open_i = MenuItem::with_id(app, "open", "Open Dashboard", true, None::<&str>)?;
+            let sep = PredefinedMenuItem::separator(app)?;
+            let quit_i = MenuItem::with_id(app, "quit", "Quit SoledadWX", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&open_i, &sep, &quit_i])?;
+
+            let tray = TrayIconBuilder::with_id("main")
+                .icon(app.default_window_icon().unwrap().clone())
+                .tooltip("SoledadWX — starting…")
+                .menu(&menu)
+                // Left click opens the dashboard; the menu is right-click only,
+                // which is the Windows convention.
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "open" => open_dashboard(app),
+                    "quit" => {
+                        // The ONLY path that is allowed to stop the recorder.
+                        QUITTING.store(true, Ordering::SeqCst);
+                        app.exit(0);
+                    }
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        open_dashboard(tray.app_handle());
+                    }
+                })
+                .build(app)?;
+
+            // Refresh the tooltip on a slow timer — the data arrives about once
+            // a minute, and the "last reading" age needs to keep ticking even
+            // when nothing arrives at all. That is the whole point of it.
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    let _ = tray.set_tooltip(Some(tooltip_text()));
+                    tokio::time::sleep(Duration::from_secs(20)).await;
+                }
+            });
+
             // Catch the archive up from the cloud for any time the app wasn't
             // running, concurrently with starting the live stream.
             let bf_handle = app.handle().clone();
@@ -194,8 +398,19 @@ pub fn run() {
             greet, db_status, query_series, series_window, range_stats, console_stats, wind_rose, series_hours,
             records, day_compare
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            // Closing the dashboard destroys the last window, which Tauri would
+            // normally treat as "quit". It is not: the recorder is the point of
+            // this program and the window is just a viewer. Only the tray's
+            // Quit item is allowed through.
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                if !QUITTING.load(Ordering::SeqCst) {
+                    api.prevent_exit();
+                }
+            }
+        });
 }
 
 

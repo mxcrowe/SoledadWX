@@ -10,14 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [
-      {
-        "title": "SoledadWX",
-        "width": 1800,
-        "height": 1150,
-        "maximized": true
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }
