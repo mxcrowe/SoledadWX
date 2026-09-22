@@ -356,7 +356,18 @@ fn start_weather_listener(app_handle: AppHandle) {
         loop {
             run_websocket(app_handle.clone(), &mut recorder).await;
             println!("Connection dropped. Reconnecting in 5 seconds...");
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            tokio::time::sleep(Duration::from_secs(5)).await;
+
+            // Every dropped connection leaves a hole — a sleep, a network
+            // outage, a Watchdog-forced reconnect. Go and look for it now
+            // rather than waiting up to half an hour for the timer, because
+            // the interesting weather is often exactly what we just missed.
+            // Cheap and self-guarding when there is nothing to fill.
+            let bf = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                db::backfill(bf).await;
+            });
         }
     });
 }
@@ -422,9 +433,19 @@ pub fn run() {
 
             // Catch the archive up from the cloud for any time the app wasn't
             // running, concurrently with starting the live stream.
+            // Backfill on launch, then on a slow timer forever.
+            //
+            // Running it ONLY at launch was the bug behind the 2026-09-22
+            // finding: the Monitor survives sleep, so it never restarts, so
+            // the 8.6-hour hole sleep left was never even looked for. It is
+            // cheap to repeat — the scan is one indexed window query, and it
+            // exits immediately when there is nothing to fill.
             let bf_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                db::backfill(bf_handle).await;
+                loop {
+                    db::backfill(bf_handle.clone()).await;
+                    tokio::time::sleep(Duration::from_secs(1800)).await;
+                }
             });
             start_weather_listener(app.handle().clone());
 

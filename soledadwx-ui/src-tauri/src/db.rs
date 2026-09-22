@@ -58,6 +58,18 @@ CREATE TRIGGER IF NOT EXISTS obs_dirty_delete AFTER DELETE ON observations BEGIN
     INSERT OR IGNORE INTO rollup_dirty(day_local)
     VALUES (date(OLD.ts_utc, 'unixepoch', 'localtime'));
 END;
+
+-- Gaps the Backfill has already tried to fill, so a timer does not re-request
+-- the same barren window forever. Some holes are genuinely unfillable — if
+-- the station or the house internet was down, Ambient has nothing either —
+-- and Ambient allows only ~1 request/second per key.
+CREATE TABLE IF NOT EXISTS backfill_attempts (
+    gap_start    INTEGER PRIMARY KEY,   -- epoch of the last reading BEFORE the hole
+    gap_end      INTEGER NOT NULL,      -- epoch of the first reading AFTER it
+    last_attempt INTEGER NOT NULL,
+    attempts     INTEGER NOT NULL,
+    rows_gained  INTEGER NOT NULL       -- from the most recent attempt
+) WITHOUT ROWID;
 ";
 
 pub fn db_path() -> PathBuf {
@@ -1169,25 +1181,247 @@ fn last_cloud_ts(conn: &Connection) -> Option<i64> {
     ).ok().flatten()
 }
 
+/// A hole in the Ambient-sourced record: `(last reading before, first after)`.
+pub type Gap = (i64, i64);
+
+/// Readings arrive ~1/min live and every 5 min via REST; Ambient thins older
+/// data to 10 min. Anything past 15 minutes is a real hole, not cadence.
+const GAP_MIN_SECS: i64 = 900;
+/// How far back routine scans look. Ambient's retention makes anything older a
+/// one-off archaeology job, not a job for a timer.
+const GAP_SCAN_DAYS: i64 = 30;
+/// A hole that yielded nothing last time is probably unfillable — the station
+/// or the house internet was down, so Ambient has nothing either. Do not
+/// re-request it on every tick; Ambient allows ~1 request/second per key.
+const GAP_RETRY_SECS: i64 = 6 * 3600;
+
+/// Find holes in the Ambient-sourced record, newest first.
+///
+/// THE BUG THIS EXISTS TO FIX: the original Backfill asked only "does the
+/// archive reach the present?" — `last_cloud_ts()` is a MAX over amb_rest and
+/// amb_ws. After the machine sleeps, the Recorder resumes on wake and pushes
+/// that MAX to now, so the archive *looks* complete and Backfill exits in
+/// under a millisecond. It handled TRAILING gaps beautifully (26 days
+/// recovered on 2026-09-21) and was structurally blind to INTERIOR ones,
+/// which is what sleep produces every single night. Measured on 2026-09-22:
+/// 16 interior gaps and 62 hours missing across the previous year, none of
+/// which would ever have been noticed, let alone filled.
+///
+/// The trailing gap is returned too — it is just a hole whose far end is now.
+fn find_gaps(conn: &Connection, scan_days: i64, min_gap: i64) -> Vec<Gap> {
+    let now = chrono::Utc::now().timestamp();
+    let since = now - scan_days * 86_400;
+    let mut gaps: Vec<Gap> = Vec::new();
+
+    let mut stmt = match conn.prepare(
+        "SELECT prev_ts, ts_utc FROM (
+             SELECT ts_utc, LAG(ts_utc) OVER (ORDER BY ts_utc) AS prev_ts
+             FROM observations
+             WHERE metric_id = (SELECT id FROM metrics WHERE name='tempf')
+               AND source_id IN (SELECT id FROM sources
+                                 WHERE kind IN ('amb_rest','amb_ws'))
+               AND ts_utc >= ?1
+         )
+         WHERE prev_ts IS NOT NULL AND ts_utc - prev_ts > ?2
+         ORDER BY prev_ts DESC",
+    ) {
+        Ok(s) => s,
+        Err(_) => return gaps,
+    };
+    if let Ok(rows) = stmt.query_map(rusqlite::params![since, min_gap], |r| {
+        Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
+    }) {
+        gaps.extend(rows.flatten());
+    }
+
+    // ...and the trailing edge, which the LAG scan cannot see.
+    if let Some(last) = last_cloud_ts(conn) {
+        if now - last > min_gap {
+            gaps.insert(0, (last, now));
+        }
+    }
+    gaps
+}
+
+/// Should we attempt this hole now? False when a recent attempt came back
+/// empty — see `GAP_RETRY_SECS`.
+fn gap_worth_attempting(conn: &Connection, gap: Gap) -> bool {
+    let now = chrono::Utc::now().timestamp();
+    match conn.query_row(
+        "SELECT last_attempt, rows_gained FROM backfill_attempts WHERE gap_start = ?1",
+        [gap.0],
+        |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+    ) {
+        Ok((last_attempt, gained)) => gained > 0 || now - last_attempt > GAP_RETRY_SECS,
+        Err(_) => true, // never tried
+    }
+}
+
+fn record_attempt(conn: &Connection, gap: Gap, gained: i64) {
+    let now = chrono::Utc::now().timestamp();
+    let _ = conn.execute(
+        "INSERT INTO backfill_attempts(gap_start, gap_end, last_attempt, attempts, rows_gained)
+         VALUES (?1, ?2, ?3, 1, ?4)
+         ON CONFLICT(gap_start) DO UPDATE SET
+             gap_end      = excluded.gap_end,
+             last_attempt = excluded.last_attempt,
+             attempts     = attempts + 1,
+             rows_gained  = excluded.rows_gained",
+        rusqlite::params![gap.0, gap.1, now, gained],
+    );
+}
+
+/// Fetch one range `(from, to]` from Ambient and insert it.
+///
+/// Walks backwards in pages of 288 from `to`, stopping once a page reaches
+/// back past `from`. Returns the number of rows that were actually NEW, which
+/// is what distinguishes an unfillable hole from one we merely re-fetched.
+#[allow(clippy::too_many_arguments)]
+async fn fill_range(
+    client: &reqwest::Client,
+    mac_enc: &str,
+    app_key: &str,
+    api_key: &str,
+    from_ts: i64,
+    to_ts: i64,
+    app: &AppHandle,
+    done: &mut usize,
+) -> i64 {
+    let from_ms = from_ts * 1000;
+    let to_ms = to_ts * 1000;
+    let mut end_date: Option<i64> = Some(to_ms);
+    let mut pages = 0;
+    let mut gained: i64 = 0;
+
+    loop {
+        if pages > 400 {
+            break; // safety
+        }
+        let mut url = format!(
+            "{AMBIENT_API_BASE}/devices/{mac_enc}?applicationKey={app_key}&apiKey={api_key}&limit=288"
+        );
+        if let Some(ed) = end_date {
+            url.push_str(&format!("&endDate={ed}"));
+        }
+
+        // Fetch with backoff — 429s clear once we slow below 1 req/sec.
+        let mut fetched: Option<Vec<AmbientReading>> = None;
+        for attempt in 0..4u64 {
+            match client.get(&url).send().await.and_then(|r| r.error_for_status()) {
+                Ok(resp) => match resp.json::<Vec<AmbientReading>>().await {
+                    Ok(pg) => {
+                        fetched = Some(pg);
+                        break;
+                    }
+                    Err(e) => {
+                        println!("Backfill: parse failed: {e}");
+                        break;
+                    }
+                },
+                Err(e) => {
+                    println!("Backfill: fetch attempt {} failed ({e}); backing off", attempt + 1);
+                    tokio::time::sleep(std::time::Duration::from_secs(2 * (attempt + 1))).await;
+                }
+            }
+        }
+        let page = match fetched {
+            Some(pg) => pg,
+            None => break,
+        };
+        if page.is_empty() {
+            break;
+        }
+
+        // Records are newest-first.
+        let oldest_ms = page.last().map(|r| r.dateutc).unwrap_or(from_ms);
+        if let Ok(conn) = Connection::open(db_path()) {
+            let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
+            let sid: Option<i64> = conn
+                .query_row("SELECT id FROM sources WHERE kind='amb_rest'", [], |r| r.get(0))
+                .ok();
+            if let Some(sid) = sid {
+                let mids: HashMap<String, i64> = conn
+                    .prepare("SELECT name, id FROM metrics")
+                    .ok()
+                    .and_then(|mut st| {
+                        st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+                            .ok()
+                            .map(|rows| rows.flatten().collect())
+                    })
+                    .unwrap_or_default();
+                for reading in &page {
+                    // Strictly inside the hole. Anything outside either exists
+                    // already or belongs to a different gap's attempt.
+                    if reading.dateutc <= from_ms || reading.dateutc > to_ms {
+                        continue;
+                    }
+                    let ts = reading.dateutc / 1000;
+                    for (name, val) in value_pairs(reading) {
+                        if let (Some(v), Some(&mid)) = (val, mids.get(name)) {
+                            if let Ok(n) = conn.execute(
+                                "INSERT OR IGNORE INTO observations(metric_id, ts_utc, source_id, value)
+                                 VALUES (?1, ?2, ?3, ?4)",
+                                rusqlite::params![mid, ts, sid, v],
+                            ) {
+                                gained += n as i64;
+                            }
+                            *done += 1;
+                        }
+                    }
+                }
+            }
+        }
+        let _ = app.emit("backfill", serde_json::json!({ "active": true, "done": *done }));
+        pages += 1;
+
+        if oldest_ms <= from_ms {
+            break;
+        }
+        end_date = Some(oldest_ms - 1);
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    }
+    gained
+}
+
+/// Find every hole in the recent Ambient record and fill what can be filled.
+///
+/// Supersedes the original "is the archive behind?" check, which could only
+/// ever see a trailing gap. See `find_gaps` for why that was structurally
+/// blind to the holes sleep leaves every night.
 pub async fn backfill(app: AppHandle) {
     dotenvy::dotenv().ok();
-    let api_key = match std::env::var("AMBIENT_API_KEY") { Ok(k) => k, Err(_) => return };
-    let app_key = match std::env::var("AMBIENT_APP_KEY") { Ok(k) => k, Err(_) => return };
+    let api_key = match std::env::var("AMBIENT_API_KEY") {
+        Ok(k) => k,
+        Err(_) => return,
+    };
+    let app_key = match std::env::var("AMBIENT_APP_KEY") {
+        Ok(k) => k,
+        Err(_) => return,
+    };
 
-    // Where does our archive currently end?
-    let last_ts = {
-        let conn = match Connection::open(db_path()) { Ok(c) => c, Err(_) => return };
-        last_cloud_ts(&conn)
+    let gaps: Vec<Gap> = {
+        let conn = match Connection::open(db_path()) {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
+        if last_cloud_ts(&conn).is_none() {
+            return; // empty archive: use the Python rescue, not this
+        }
+        find_gaps(&conn, GAP_SCAN_DAYS, GAP_MIN_SECS)
+            .into_iter()
+            .filter(|g| gap_worth_attempting(&conn, *g))
+            .collect()
     };
-    let last_ts = match last_ts {
-        Some(t) => t,
-        None => return, // empty DB: use the Python rescue, not launch backfill
-    };
-    let now = chrono::Utc::now().timestamp();
-    if now - last_ts < 600 {
-        return; // less than 10 min behind — nothing worth fetching
+    if gaps.is_empty() {
+        return;
     }
-    let last_ts_ms = last_ts * 1000;
+    let total: i64 = gaps.iter().map(|(a, b)| b - a).sum();
+    println!(
+        "Backfill: {} gap(s) worth {:.1} h; fetching...",
+        gaps.len(),
+        total as f64 / 3600.0
+    );
 
     let client = reqwest::Client::builder()
         .user_agent("SoledadWX/1.0")
@@ -1204,86 +1438,40 @@ pub async fn backfill(app: AppHandle) {
             },
             Err(_) => return,
         },
-        Err(e) => { println!("Backfill: device list failed: {e}"); return; }
+        Err(e) => {
+            println!("Backfill: device list failed: {e}");
+            return;
+        }
     };
     let mac_enc = mac.replace(':', "%3A");
 
-    println!("Backfill: archive ends {}s ago; catching up from the cloud…", now - last_ts);
     let _ = app.emit("backfill", serde_json::json!({ "active": true, "done": 0 }));
-
     // Ambient allows <= 1 req/sec per key; the device call just fired.
     tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
 
-    let mut end_date: Option<i64> = None;
     let mut done = 0usize;
-    let mut pages = 0;
-    loop {
-        if pages > 400 { break; } // safety
-        let mut url = format!(
-            "{AMBIENT_API_BASE}/devices/{mac_enc}?applicationKey={app_key}&apiKey={api_key}&limit=288"
-        );
-        if let Some(ed) = end_date {
-            url.push_str(&format!("&endDate={ed}"));
-        }
-
-        // Fetch with backoff — 429s clear once we slow below 1 req/sec.
-        let mut fetched: Option<Vec<AmbientReading>> = None;
-        for attempt in 0..4u64 {
-            match client.get(&url).send().await.and_then(|r| r.error_for_status()) {
-                Ok(resp) => match resp.json::<Vec<AmbientReading>>().await {
-                    Ok(p) => { fetched = Some(p); break; }
-                    Err(e) => { println!("Backfill: parse failed: {e}"); break; }
-                },
-                Err(e) => {
-                    println!("Backfill: fetch attempt {} failed ({e}); backing off", attempt + 1);
-                    tokio::time::sleep(std::time::Duration::from_secs(2 * (attempt + 1))).await;
-                }
-            }
-        }
-        let page = match fetched { Some(p) => p, None => break };
-        if page.is_empty() { break; }
-
-        // Records are newest-first. Insert everything strictly newer than our
-        // archive end; stop once the page reaches back past it.
-        let oldest_ms = page.last().map(|r| r.dateutc).unwrap_or(last_ts_ms);
+    for gap in gaps {
+        let gained = fill_range(
+            &client, &mac_enc, &app_key, &api_key, gap.0, gap.1, &app, &mut done,
+        )
+        .await;
         if let Ok(conn) = Connection::open(db_path()) {
             let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
-            let sid: Option<i64> = conn
-                .query_row("SELECT id FROM sources WHERE kind='amb_rest'", [], |r| r.get(0))
-                .ok();
-            if let Some(sid) = sid {
-                let mids: HashMap<String, i64> = conn
-                    .prepare("SELECT name, id FROM metrics").ok()
-                    .and_then(|mut s| {
-                        s.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
-                            .ok()
-                            .map(|rows| rows.flatten().collect())
-                    })
-                    .unwrap_or_default();
-                for reading in &page {
-                    if reading.dateutc <= last_ts_ms { continue; }
-                    let ts = reading.dateutc / 1000;
-                    for (name, val) in value_pairs(reading) {
-                        if let (Some(v), Some(&mid)) = (val, mids.get(name)) {
-                            let _ = conn.execute(
-                                "INSERT OR IGNORE INTO observations(metric_id, ts_utc, source_id, value)
-                                 VALUES (?1, ?2, ?3, ?4)",
-                                rusqlite::params![mid, ts, sid, v],
-                            );
-                            done += 1;
-                        }
-                    }
-                }
-            }
+            record_attempt(&conn, gap, gained);
         }
-        let _ = app.emit("backfill", serde_json::json!({ "active": true, "done": done }));
-        pages += 1;
-
-        if oldest_ms <= last_ts_ms { break; }
-        end_date = Some(oldest_ms - 1);
-        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+        let mins = (gap.1 - gap.0) / 60;
+        if gained > 0 {
+            println!("Backfill: {mins} min hole -> {gained} new values.");
+        } else {
+            println!(
+                "Backfill: {} min hole yielded nothing; Ambient has no data either. \
+Not retrying for {} h.",
+                mins,
+                GAP_RETRY_SECS / 3600
+            );
+        }
     }
 
-    println!("Backfill: done, {done} metric-values inserted across {pages} pages.");
+    println!("Backfill: done, {done} metric-values seen.");
     let _ = app.emit("backfill", serde_json::json!({ "active": false, "done": done }));
 }
