@@ -42,52 +42,79 @@ static LIVE: Mutex<LiveState> = Mutex::new(LiveState {
     connected: false,
 });
 
+/// Windows tray tooltips are capped at **64 UTF-16 code units** including the
+/// null terminator (`NOTIFYICONDATA.szTip`), and the shell truncates silently
+/// rather than complaining. The first version of this ran to 93 characters and
+/// lost its last line mid-word. Everything below is written to fit 63, and
+/// `clamp_tip` enforces it so a long value can never quietly eat a line again.
+const TIP_MAX: usize = 63;
+
+fn clamp_tip(s: String) -> String {
+    // Count UTF-16 units, which is what the shell counts — '°' and '⚠' are one
+    // unit each but two and three UTF-8 bytes, so byte length would mislead.
+    if s.encode_utf16().count() <= TIP_MAX {
+        return s;
+    }
+    let mut out = String::new();
+    let mut n = 0usize;
+    for ch in s.chars() {
+        let w = ch.len_utf16();
+        if n + w > TIP_MAX - 1 {
+            break;
+        }
+        out.push(ch);
+        n += w;
+    }
+    out.push('…');
+    out
+}
+
 fn tooltip_text() -> String {
     let st = match LIVE.lock() {
         Ok(g) => g,
         Err(p) => p.into_inner(),
     };
-    let mut out = String::from("SoledadWX");
-    match (st.tempf, st.humidity) {
-        (Some(t), Some(h)) => out.push_str(&format!("
-{:.1} °F   {:.0}% RH", t, h)),
-        (Some(t), None) => out.push_str(&format!("
-{:.1} °F", t)),
-        _ => {}
+
+    // Line 1: the conditions, compactly. No units spelled out — the numbers
+    // and suffixes carry it, and every character is contended.
+    let mut line1 = String::from("SoledadWX");
+    if let Some(t) = st.tempf {
+        line1.push_str(&format!(" {:.1}°F", t));
+    }
+    if let Some(h) = st.humidity {
+        line1.push_str(&format!(" {:.0}%", h));
     }
     if let Some(w) = st.wind_mph {
-        out.push_str(&format!("
-Wind {:.1} kt", w * MPH_TO_KT));
+        line1.push_str(&format!(" {:.1}kt", w * MPH_TO_KT));
     }
-    // The line that matters: proof the archive is actually being fed. A stale
-    // age here is the difference between "running" and "recording".
-    match st.last_data_epoch {
+
+    // Line 2: the line that actually matters — proof the archive is being fed.
+    // "running" and "recording" are different things, and this is the only
+    // place the difference is visible without opening anything.
+    let line2 = match st.last_data_epoch {
         Some(ts) => {
-            let age = chrono::Utc::now().timestamp() - ts;
+            let age = (chrono::Utc::now().timestamp() - ts).max(0);
             let ago = if age < 90 {
-                format!("{}s ago", age.max(0))
+                format!("{}s", age)
             } else if age < 5400 {
-                format!("{} min ago", age / 60)
+                format!("{}m", age / 60)
+            } else if age < 172_800 {
+                format!("{:.1}h", age as f64 / 3600.0)
             } else {
-                format!("{:.1} h ago", age as f64 / 3600.0)
+                format!("{}d", age / 86_400)
             };
-            out.push_str(&format!("
-Last reading {}", ago));
-            if age > DATA_STALL_SECS as i64 {
-                out.push_str("  ⚠");
-            }
+            let warn = if age > DATA_STALL_SECS as i64 { " ⚠" } else { "" };
+            format!("Last {} ago{} · {} rec", ago, warn, st.recorded)
         }
-        None => out.push_str(if st.connected {
-            "
-Connected — awaiting first reading"
+        None => String::from(if st.connected {
+            "Connected — no reading yet"
         } else {
-            "
-Not connected"
+            "NOT CONNECTED ⚠"
         }),
-    }
-    out.push_str(&format!("
-{} readings recorded this session", st.recorded));
-    out
+    };
+
+    clamp_tip(format!("{}
+{}", line1, line2))
 }
 
 /// Build the dashboard window on demand, or focus it if it already exists.
