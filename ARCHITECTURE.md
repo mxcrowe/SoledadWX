@@ -1,10 +1,42 @@
 # SoledadWX — Vision & Architecture
 
-**Status:** Living document. Last updated 2026-05-09.
+**Status:** Living document. Last updated 2026-09-22.
 **Location:** Mount Soledad, La Jolla, CA (32.819° N, 117.241° W, 522 ft / 159 m)
 **Repo:** [github.com/mxcrowe/SoledadWX](https://github.com/mxcrowe/SoledadWX)
 
 ---
+
+## 0. Vernacular — agreed 2026-09-22
+
+Binding names. Use these exactly; they were chosen to match what the code
+already says, not invented over it.
+
+| Term | Means |
+|---|---|
+| **Monitor** | The always-on background process — tray icon, Recorder, Backfill, Watchdogs, Rollup refresher. Starts at login, survives the Dashboard closing, stops only via the tray's Quit. |
+| **Dashboard** | The window. The React app and all its pages. Built on demand, genuinely destroyed on close. |
+| **Archive** | The SQLite database. 26.5M observations, 2009→present. The thing everything else exists to protect. |
+| **Recorder** | Inside the Monitor: writes live WebSocket readings (`db::Recorder`). |
+| **Backfill** | Inside the Monitor: REST catch-up for time the Monitor missed (`db::backfill`). |
+| **Watchdog** | Inside the Monitor: the two stall detectors on the WebSocket (`DATA_STALL_SECS`). |
+| **Rollup refresher** | Inside the Monitor: dirty-day recompute (`db::refresh_dirty_rollups`). |
+| **Scripts** | The Python side — importers, one-time corrections, `build_rollups.py`. |
+
+Reads as: *"the Monitor kept recording while the Dashboard was closed"*;
+*"Backfill did not heal the Archive."*
+
+### "Console" means three different things — keep them apart
+
+1. **Console** (capitalised, a page) — the Dashboard's main page, in `NAV`.
+2. **the console** (lowercase, hardware) — the Ambient WS-1002 indoor display
+   unit. It carries its own temperature and humidity sensors, which is not a
+   footnote: on 2026-08-26 the console's hygrometer was an independent witness
+   that the outdoor humidity collapse was real weather and not a dead sensor.
+3. **NOT the background process.** That is the **Monitor**. "Console" is the
+   word someone will reach for; do not let them.
+
+"The console read 70%" and "the Console shows 70%" are claims about different
+instruments. Disambiguate every time.
 
 ## 1. Vision
 
