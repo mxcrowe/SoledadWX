@@ -96,6 +96,46 @@ while for context, then prune). Newest context at the bottom of each item.
   than silently plotted. That is now the highest-value data-integrity task in
   the backlog.
 
+- [ ] **★ A 24/7 RECORDER ELSEWHERE — NAS or cloud (MXC's idea, Sep 22 2026).**
+  Tabled, not rejected. MXC has Oracle Cloud compute provisioned and unused;
+  a home NAS would serve equally. Either way the point is a machine that
+  never sleeps.
+  **What it actually buys, which is NOT uptime.** Ambient's cloud already
+  holds whatever we miss, so completeness is fixable locally with gap-aware
+  backfill. What cannot be fixed locally is FIDELITY: Ambient **thins** older
+  data. Measured 2026-09-21 — the recovered 2026-08-27 came back with 144
+  samples spanning the full day instead of 288, i.e. 10-minute resolution
+  where we record at 5. Every hole we backfill comes home degraded, and that
+  loss is permanent. A 24/7 recorder catches each push live at full cadence.
+  Secondary win: redundancy against our own machine failing.
+  **Feasibility is good.** The recorder touches Tauri in FOUR lines — one
+  `emit` for the live reading in `run_websocket`, three for backfill progress
+  in `db::backfill`. `Recorder`, all query code and `refresh_dirty_rollups`
+  are plain rusqlite. A headless Linux binary is a `[[bin]]` target plus
+  making those emits optional. An afternoon, not a weekend.
+  **Architecture — one approach works, one corrupts.**
+    - NEVER sync the SQLite file bidirectionally. Two hosts writing one file
+      is corruption waiting to happen.
+    - DO have the remote write its own local SQLite; the desktop pulls
+      periodically and merges with INSERT OR IGNORE. Safe because the PK is
+      (metric_id, ts_utc, source_id): identical pushes dedupe themselves.
+  **Give the remote recorder its OWN source kind.** Both recorders capture
+  the same push at the SAME ts_utc, so `canonical_observations` partitions
+  them together and priority genuinely SUBSTITUTES — the well-behaved case,
+  unlike MSDSD's different sampling grid (see the additive-gap-fill entry).
+  Free observability: which recorder was up when, measurable from the data.
+  **Two gotchas to settle first.**
+    1. **Oracle reclaims idle Always Free compute** — roughly under 20% CPU,
+       network and memory over a 7-day window. Our recorder runs at ~0.2% of
+       one core and 20 MB: precisely the profile they reclaim. Silent death,
+       which is the failure class that has bitten us three times this month.
+       Pay-As-You-Go instances are exempt; confirm which tier before relying
+       on it. A NAS sidesteps this entirely.
+    2. Secrets: `.env` (Ambient API keys) has to live on that box.
+  MXC: "I set the Oracle system up but never used it, so it would be a good
+  exercise." Treat it as such — the archive's correctness must not depend on
+  it working.
+
 - [ ] **★ EVENT LOG — the dry line of 2026-08-26 (~15:17 PDT).** Observed live
   by MXC and reconstructed as it happened. Worth keeping because the archive
   cannot reproduce the part that mattered.
