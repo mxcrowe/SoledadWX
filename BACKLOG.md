@@ -11,6 +11,51 @@ while for context, then prune). Newest context at the bottom of each item.
 
 ## Data integrity
 
+- [ ] **21 months of WU sit inert, awaiting a priority decision (Sep 22 2026).**
+  `import_wu.py` ingested 2025-01-01..2026-09-21 (629 days, 2,099,316 rows).
+  The band 2025-01-01..2025-08-16 landed inside the existing
+  `("2020-04-19","2025-08-17","wu_pws",3)` rule and is live. Everything after
+  2025-08-17 — **1,332,481 rows over 389 days** — has NO `source_priority` row,
+  so it is stored but invisible to `canonical_observations` and the rollups.
+  That is the deliberate safe default, not an oversight. Deciding the rank is a
+  climatology call and needs Michael.
+  **The constraint that shapes the choice:** WU and Ambient timestamps NEVER
+  coincide — exact-match was 0/288 on every day sampled, though ~95% fall
+  within 60 s. So priority here can only ever be ADDITIVE; it cannot substitute
+  WU's unthinned 5-min record for Ambient's, however much better it is. The
+  precedent already exists in the record: on 2023-12-22/23 `mdb` had a hole and
+  `wu_pws` supplied all 276/288 canonical rows.
+
+- [ ] **WU can only supply INTERVAL MAXIMA for solar and UV — mixing them with
+  Ambient's instantaneous samples shifts the basis of a daily max (Sep 22 2026).**
+  The WU PWS history API exposes `solarRadiationHigh` and `uvHigh` and offers no
+  Avg counterpart (it does offer Avg/High/Low for temp, dewpoint, wind, humidity).
+  So for those two metrics `import_wu.extract()` has no honest alternative — this
+  is a property of the API, not a bug to fix.
+  Measured effect over the 228 newly-live days: solar daily max changed on 199
+  days, by up to +231.8 W/m²; UV on 161 days, up to +4.4. **Nothing breached a
+  physical ceiling** (0 days over 1100 W/m²), and the signature points to genuine
+  recovery rather than inflation — the largest jumps are all on days whose OLD max
+  was low (545→777, 347→560), i.e. broken-cloud days where a 5-min max catches
+  bright breaks that sparse instantaneous sampling misses.
+  The problem is therefore not the values but the **discontinuity**: daily solar/UV
+  maxima for Jan–Aug 2025 are now computed on a different basis than for 2024 or
+  2026. Options: (a) accept and document; (b) delete solar+UV for source 7 so the
+  basis stays uniform; (c) keep the rows but exclude them from rollups — which
+  wants the `quality_flag` / provenance work already listed below.
+  Applying the isolated-record test to the UV tail: 13.0×109, 12.0×630, 11.0×3389
+  — a crowded, decaying tail, NOT a rail. UVI 13 is high for 32.8°N but it is a
+  calibration offset at the top of the range, not an artifact.
+
+- [ ] **WU's upload path failed on 36 days while the station kept recording
+  (Sep 22 2026).** Of 629 days fetched, 36 came back empty — 2025-08-01..08-15
+  consecutively, then scattered through Sep–Dec 2025. On every one of those days
+  the Archive holds a full 288 readings/day from `mdb`/`amb_rest`. So the station
+  was up and the failure was WU-side. Two independent upload paths are worth
+  having precisely because they fail independently; neither alone is a complete
+  record. (Note the Aug 1–15 run ends one day before the old hardcoded
+  `WU_END = date(2025,8,16)` — coincidence, but it is why nobody noticed.)
+
 - [ ] **Empty ≠ zero.** Absent-sensor readings must be NULL in the data layer
   and render "N/A" (or "—") in the UI — never `0`, which asserts a real
   measurement. Concretely:
@@ -365,6 +410,20 @@ while for context, then prune). Newest context at the bottom of each item.
   sampling grid.
 
 ## Instrument / sensor health
+
+- [ ] **★ `mdb` heat-index channel is dead — pinned near 46 °F (found Sep 22 2026).**
+  All 4,575 `heatindexf` rows from source `mdb` span only **46.4–50.54 °F**,
+  including `2025-08-07 15:52` local reading **46.4** on an August afternoon.
+  It is not tracking anything. Found only because the WU import replaced those
+  values and the rollup diff showed daily highs moving +39 °F on 9 days — the
+  new figures track temperature correctly (83.7 vs temp 84.9; and 86.6 ABOVE a
+  temp of 83.5 at 61% RH, which is what a heat index should do). So WU repaired
+  this metric rather than corrupting it.
+  Still to do: (1) audit the rest of `mdb`'s derived channels — if heat index is
+  dead, windchill/dewpoint deserve the same check; (2) decide whether to purge
+  `mdb.heatindexf` outright, since a constant is worse than a gap here; (3) note
+  that `derive_apparent_temp.py` computes AT/humidex/wet-bulb from temp+RH and is
+  unaffected — this is only the station-reported heat index.
 
 - [ ] **★ Solar sensor blocked at HIGH sun angles (Jul 8 2026, refined dx).**
   Full-day clear-sky analysis (Jul 7): the own/clear-sky ratio is a U — best at
