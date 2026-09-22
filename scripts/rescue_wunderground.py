@@ -6,10 +6,33 @@ Jun 29, 2018, and again from Sep 27, 2018 (WS-1002) onward — same roof, same
 site. This is on-site data that patches the archive's gaps (see
 data/DATA_REPORT.md §2), including the 2018-2022 holes.
 
-Strategy: query our own archive for days with thin canonical coverage, then
-fetch ONLY those days from WU (history/all returns one local day of ~5-min
-records per call). Raw JSON saved verbatim to Legacy/WU-Rescue/; importer
-comes separately.
+Two modes:
+  * default — query our own archive for days with THIN canonical coverage and
+    fetch only those. Right for patching historical holes.
+  * --all    — fetch every day in the range regardless of coverage. Right for
+    ingesting a period we simply never collected.
+
+history/all returns one local day of ~5-min records per call. Raw JSON is
+saved verbatim to Legacy/WU-Rescue/; the importer comes separately.
+
+WHY --all EXISTS (2026-09-22). This script used to stop at 2025-08-16, on the
+reasoning that "after this, amb_rest/amb_ws cover everything". That was wrong
+twice over:
+  * Ambient THINS older data — a day recovered weeks later comes back at
+    10-minute resolution where we record at 5. WU does not thin: probing five
+    dates across 2025-2026 returned 288 clean readings each, including one
+    from twenty months ago.
+  * WU is an INDEPENDENT upload path from the same roof. When Ambient's side
+    fails but the station is healthy, WU is untouched — insurance against the
+    exact failure class the Monitor's gap-aware Backfill was written for.
+It is not a proxy: KCALAJOL6 is our own station. No elevation offset, no bias
+to correct.
+
+It also diagnoses outages the Ambient record cannot. Across the 31.5-hour hole
+of 2026-02-04, WU holds 328 rows of which exactly TWO carry a temperature —
+the console kept uploading while the sensor array reported nothing. That is
+how we know that outage was sensor-side and genuinely unrecoverable, rather
+than an upload failure worth chasing.
 
 Free-tier etiquette: <=30 calls/min, <=1500 calls/day. This script throttles
 to ~25/min and stops after MAX_CALLS; re-run tomorrow to continue (existing
@@ -17,6 +40,7 @@ files are skipped, so it resumes where it left off).
 
 Usage:
     python scripts/rescue_wunderground.py [max_calls]
+    python scripts/rescue_wunderground.py --all --from 2025-01-01 --to 2026-09-21
 
 Env (soledadwx-ui/src-tauri/.env or environment):
     WU_API_KEY
@@ -42,7 +66,10 @@ OUT_DIR = wxdb.ROOT / "Legacy" / "WU-Rescue"
 API = "https://api.weather.com/v2/pws/history/all"
 
 WU_START = date(2012, 11, 29)   # first day with table data on WU
-WU_END = date(2025, 8, 16)      # after this, amb_rest/amb_ws cover everything
+# Was hardcoded to 2025-08-16 with the note "after this, amb_rest/amb_ws
+# cover everything". That was wrong, and expensively so — see the module
+# docstring. WU keeps publishing and we simply stopped asking.
+WU_END = date.today() - timedelta(days=1)
 THIN_THRESHOLD = 24             # fewer canonical tempf obs than this = "thin" day
 SLEEP_SECONDS = 2.5             # ~24 calls/min
 DEFAULT_MAX_CALLS = 1400        # stay under the 1500/day ceiling
@@ -58,8 +85,17 @@ def load_key() -> str | None:
     return None
 
 
-def thin_days(conn) -> list[date]:
-    """Days in [WU_START, WU_END] where canonical tempf coverage is thin."""
+def all_days(start: date, end: date) -> list[date]:
+    """Every day in the range, regardless of what we already hold."""
+    out, day = [], start
+    while day <= end:
+        out.append(day)
+        day += timedelta(days=1)
+    return out
+
+
+def thin_days(conn, start: date, end: date) -> list[date]:
+    """Days in [start, end] where canonical tempf coverage is thin."""
     # Count per local-ish day (UTC day is fine at this granularity — the gaps
     # are weeks long, an 8-hour edge effect doesn't matter).
     rows = conn.execute(
@@ -71,12 +107,12 @@ def thin_days(conn) -> list[date]:
           AND o.ts_utc >= strftime('%s', ?) AND o.ts_utc < strftime('%s', ?)
         GROUP BY d
         """,
-        (WU_START.isoformat(), (WU_END + timedelta(days=1)).isoformat()),
+        (start.isoformat(), (end + timedelta(days=1)).isoformat()),
     ).fetchall()
     counts = {r[0]: r[1] for r in rows}
     out = []
-    day = WU_START
-    while day <= WU_END:
+    day = start
+    while day <= end:
         if counts.get(day.isoformat(), 0) < THIN_THRESHOLD:
             out.append(day)
         day += timedelta(days=1)
@@ -102,15 +138,26 @@ def main() -> int:
     if not key:
         print("ERROR: WU_API_KEY not set (env or soledadwx-ui/src-tauri/.env)")
         return 1
-    max_calls = int(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_MAX_CALLS
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    max_calls = int(args[0]) if args else DEFAULT_MAX_CALLS
+    fetch_all = "--all" in sys.argv
+    start, end = WU_START, WU_END
+    if "--from" in sys.argv:
+        start = date.fromisoformat(sys.argv[sys.argv.index("--from") + 1])
+    if "--to" in sys.argv:
+        end = date.fromisoformat(sys.argv[sys.argv.index("--to") + 1])
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    conn = wxdb.get_conn()
-    wxdb.ensure_schema(conn)
-    days = thin_days(conn)
-    conn.close()
+    if fetch_all:
+        days = all_days(start, end)
+    else:
+        conn = wxdb.get_conn()
+        wxdb.ensure_schema(conn)
+        days = thin_days(conn, start, end)
+        conn.close()
     todo = [d for d in days if not (OUT_DIR / f"{STATION_ID}_{d:%Y%m%d}.json").exists()]
-    print(f"Thin days in WU window: {len(days)}; not yet fetched: {len(todo)}; "
+    mode = "all days" if fetch_all else "thin days"
+    print(f"{mode} in {start}..{end}: {len(days)}; not yet fetched: {len(todo)}; "
           f"this run will fetch up to {max_calls}.")
 
     calls = n_obs_total = n_empty = n_err = 0
