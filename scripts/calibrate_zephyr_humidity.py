@@ -1,76 +1,77 @@
 """
-Recover Zephyr-era humidity by calibrating it against MSDSD.
+Measure whether Zephyr-era humidity can be recovered. It cannot.
 
-THE PROBLEM. The Zephyr hygrometer (source 1, 2009-2018) does not have an
-offset or a drift. It has a SLOPE error pivoting near 55% RH: it reads too
-dry in dry air and too wet in moist air, over-responding in between. Measured
-against MSDSD by RH bin:
+**READ THIS BEFORE RUNNING.** This script was written to CORRECT the Zephyr
+hygrometer against MSDSD, and instead it measured the impossibility of doing
+so. It is kept because it is the instrument that established that — and
+because it will be the right tool the day some other sensor degrades
+gracefully instead of railing. Do not run it hoping for a fix.
 
-    MSDSD RH   original(2011-14)  healthy(Dec16-Jun17)  drifting(2017-18)
-    20-30%          -11.7               -11.5                -11.8
-    40-50%           -7.4                -7.0                 -0.1
-    60-70%          +15.2                -2.7                +15.5
-    70-80%          +21.6                -0.4                +17.1
-    90-100%          -1.6                +4.0                 +5.1
+WHAT WE THOUGHT (2026-08-26, morning). Binning the error against MSDSD's RH
+produced a tidy picture: reads ~11 points too dry in dry air, ~20 too wet in
+moist air, pivoting near 55%. That looks exactly like a SLOPE error, which is
+monotonic, measurable, and therefore invertible.
 
-The November 2016 replacement flattened the slope; it did not remove it. The
-dry-end bias is present in all three eras, healthy included.
+WHAT IS ACTUALLY TRUE (same day, after looking at the raw values). The sensor
+spent most of its life PINNED at exactly 99 or exactly 10:
 
-WHY THIS IS RECOVERABLE. A slope error is monotonic and measurable, so it is
-invertible. Saturation is not — once a sensor rails at 100 there is no
-information left to recover. This one never railed; it distorted. We have
-~168,000 Zephyr readings paired to MSDSD within 10 minutes to learn the
-distortion from.
+    share of all readings at the modal value
+    2011  99%: 59%    2012  99%: 81%    2013  99%: 69%    2014  99%: 60%
+    2015  10%: 53%    2016  10%: 64%    2017  99%: 32%    2018  99%: 58%
 
-WHAT THIS IS NOT. It is not substitution. Replacing Zephyr's values with
-MSDSD's would throw away the thing Zephyr uniquely has: readings at its own
-timestamps, catching local variation a station 559 m away never sampled.
-(The dry line of 2026-08-26 is the standing proof that 559 m and 187 ft of
-elevation is enough to put two stations in different air.) So the reading is
-KEPT and its transfer function corrected.
+That is saturation, which destroys information irreversibly. MXC described it
+correctly from memory at the outset — "saturated out ... readings of 0 or
+100, as I recall" — and the bin table talked us out of it.
 
-METHOD, per calendar month:
+**THE REUSABLE LESSON: aggregation can manufacture a smooth curve out of a
+hard rail.** Averaging "pinned at 99 while the truth was 70" within a 70-80%
+bin yields "+21 points", which is indistinguishable from a slope. Check the
+MODE and the rail occupancy before believing any binned bias curve.
+
+WHAT THIS SCRIPT DOES NOW. Month by month it tries the correction and refuses
+where the sensor had too little signal left for the mapping to mean anything:
+fewer than MIN_PAIRS paired samples, Pearson r below MIN_R against MSDSD,
+Zephyr's own IQR below MIN_IQR, fewer than MIN_DISTINCT resolved values, too
+many tied interior quantile knots, or — the honest backstop — a corrected
+monthly mean that fails to land near MSDSD's mean plus the measured
+site difference. Refusals are printed, never silently passed through.
+
+VERDICT: 13 of 84 months recoverable, and 12 of those are Dec 2016-Aug 2017
+where the replacement sensor was already healthy and the correction is +/-2
+points. Only Dec 2017-Feb 2018 gains anything real. **Decision: do not write
+the corrected source.** Three useful months do not justify a second humidity
+source and the confusion it would cause. The right treatment for 2011-2016 is
+the `quality_flag` column — flag it unusable and show it as such, rather than
+dressing fabricated numbers as measurements. See BACKLOG.
+
+METHOD, for the months that do pass, per calendar month:
   1. Pair each Zephyr RH sample to the nearest MSDSD sample within 10 min.
-  2. Refuse the month unless it is actually recoverable — see REFUSAL below.
-  3. Quantile-map: match the month percentiles of the Zephyr distribution onto the
-     same percentiles of MSDSD's, piecewise-linear between knots. This undoes
-     a monotonic distortion without assuming its shape.
-  4. That lands us in MSDSD's frame, which is 559 m away and 187 ft lower, so
-     add back the genuine site difference measured in the HEALTHY window
-     (Dec 2016 - Jun 2017) as a function of RH. The result is an estimate of
-     what a working hygrometer AT THIS SITE would have read.
+  2. Refuse unless recoverable (above).
+  3. Quantile-map that month's Zephyr percentiles onto MSDSD's, piecewise
+     linear between knots — undoes a monotonic distortion without assuming
+     its shape.
+  4. That lands in MSDSD's frame, 559 m away and 187 ft lower, so add back
+     the genuine site difference measured in the HEALTHY window
+     (Dec 2016 - Jun 2017) as a function of RH.
 
-REFUSAL. A month is left uncorrected when the sensor had too little dynamic
-range or agreement left for the mapping to mean anything:
-    - fewer than MIN_PAIRS paired samples
-    - Pearson r below MIN_R against MSDSD
-    - Zephyr's own interquartile range below MIN_IQR points
-This is the important part. Mid-2016, when the sensor sat at 14-26% while
-MSDSD read 76-80%, is not a distortion to invert — it is an absence of
-signal, and "correcting" it would be fabrication with a straight face.
-Refused months are reported and skipped, not silently passed through.
+NOT SUBSTITUTION. Zephyr's readings are kept and their transfer function
+corrected; replacing them with MSDSD's would discard what Zephyr uniquely has
+— readings at its own timestamps, catching local variation a station 559 m
+away never sampled. The dry line of 2026-08-26 is the standing proof that
+559 m and 187 ft is enough to put two stations in different air.
 
-OUTPUT. Corrected values are written as a SEPARATE SOURCE ('zephyr_rh_cal'),
-never over the originals. Source 1 stays byte-identical and authoritative
-until someone deliberately says otherwise.
+If ever activated, corrected values go to a SEPARATE SOURCE
+('zephyr_rh_cal'); source 1 stays byte-identical. This is the one case where
+source_priority genuinely SUBSTITUTES rather than adds, because the corrected
+rows carry the originals' exact ts_utc — unlike MSDSD's own rows, which sit
+on a different sampling grid and were therefore injected additively (BACKLOG).
+Priority rows are never added automatically.
 
-Note this is the one case where source_priority genuinely substitutes rather
-than adds: the corrected rows carry the SAME ts_utc as the originals, so
-`canonical_observations` partitions them together and rank actually
-arbitrates. That is exactly what was NOT true of MSDSD's own rows (different
-sampling grid -> additive injection; see BACKLOG). Priority rows are still
-NOT added by default — pass --activate deliberately.
-
-DOWNSTREAM. dewpointf / heatindexf / apparenttempf / humidexf / wetbulbf for
-source 1 were all derived from the bad humidity and remain wrong. Re-run
-derive_apparent_temp.py against the corrected source once this is activated.
-
-Idempotent via INSERT OR IGNORE. Safe to re-run.
+Idempotent via INSERT OR IGNORE. --dry-run is the honest mode.
 
 Usage:
     python scripts/calibrate_zephyr_humidity.py --dry-run    # report only
     python scripts/calibrate_zephyr_humidity.py              # write source
-    python scripts/calibrate_zephyr_humidity.py --activate   # + priority rows
 """
 
 from __future__ import annotations
