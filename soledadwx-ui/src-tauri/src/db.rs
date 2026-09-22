@@ -35,6 +35,29 @@ CREATE TABLE IF NOT EXISTS observations (
     PRIMARY KEY (metric_id, ts_utc, source_id)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS idx_obs_source_ts ON observations(source_id, ts_utc);
+
+-- Which civil-local days need their rollup recomputed.
+--
+-- `observations` is WITHOUT ROWID, so there is no insertion-order counter to
+-- watermark, and a ts_utc watermark would be actively WRONG: backfill and the
+-- Python importers insert OLD timestamps, which such a watermark would skip
+-- forever. A trigger is the only mechanism that catches every writer — the
+-- live recorder, the backfill, and any script — without one of them having to
+-- know that rollups exist. Measured cost: +0.7 us per inserted row, about
+-- four seconds on a 4.9M-row bulk import.
+CREATE TABLE IF NOT EXISTS rollup_dirty (
+    day_local TEXT PRIMARY KEY
+) WITHOUT ROWID;
+CREATE TRIGGER IF NOT EXISTS obs_dirty_insert AFTER INSERT ON observations BEGIN
+    INSERT OR IGNORE INTO rollup_dirty(day_local)
+    VALUES (date(NEW.ts_utc, 'unixepoch', 'localtime'));
+END;
+-- Corrections delete rows (see scripts/fix_phantom_derived_zeros.py); a day
+-- that loses its extreme is just as stale as one that gains a reading.
+CREATE TRIGGER IF NOT EXISTS obs_dirty_delete AFTER DELETE ON observations BEGIN
+    INSERT OR IGNORE INTO rollup_dirty(day_local)
+    VALUES (date(OLD.ts_utc, 'unixepoch', 'localtime'));
+END;
 ";
 
 pub fn db_path() -> PathBuf {
@@ -898,6 +921,102 @@ pub fn series_window(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
     Ok(rows)
+}
+
+/// Recompute `daily_rollups` for every day flagged in `rollup_dirty`.
+///
+/// `daily_rollups` is a pure derived cache, and until now it was only ever
+/// rebuilt by hand (`python scripts/build_rollups.py`). That meant a
+/// perpetually-running recorder would still show a frozen Records page: live
+/// data current to the minute, history stuck at whenever someone last ran the
+/// script. This closes that.
+///
+/// PERFORMANCE, because the obvious query is unusable. Filtering
+/// `canonical_observations` by a day's epoch range takes **9.5 seconds** for a
+/// recent day: the view's join gives SQLite `o.ts_utc >= p.period_start` as a
+/// candidate lower bound, and the current priority period is open-ended and
+/// starts in 2025, so it range-scans thirteen months of data to roll up one
+/// day. Older days sit in bounded periods and are fast, which is what made the
+/// problem visible. Collapsing the bounds with `max()`/`min()` BEFORE the index
+/// sees them takes the same query to **6 ms** — a 1,460x difference for an
+/// identical result (verified against the Python builder on ten days,
+/// including a DST transition).
+///
+/// Semantics deliberately mirror `build_rollups.py` exactly, including
+/// `ts_min`/`ts_max` being the EARLIEST timestamp at which the extreme
+/// occurred. If you change one, change both.
+pub fn refresh_dirty_rollups() -> Result<(usize, usize), String> {
+    let conn = Connection::open(db_path()).map_err(|e| e.to_string())?;
+    conn.busy_timeout(std::time::Duration::from_secs(10))
+        .map_err(|e| e.to_string())?;
+
+    let days: Vec<String> = {
+        let mut stmt = conn
+            .prepare("SELECT day_local FROM rollup_dirty ORDER BY day_local")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
+    };
+    if days.is_empty() {
+        return Ok((0, 0));
+    }
+
+    let mut total_rows = 0usize;
+    for day in &days {
+        // Local midnight -> UTC epoch, for this day and the next. Deriving BOTH
+        // ends this way is what makes the 23- and 25-hour DST days correct.
+        let (a, b): (i64, i64) = conn
+            .query_row(
+                "SELECT CAST(strftime('%s', ?1 || ' 00:00:00', 'utc') AS INTEGER),
+                        CAST(strftime('%s', date(?1, '+1 day') || ' 00:00:00', 'utc') AS INTEGER)",
+                [day],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .map_err(|e| e.to_string())?;
+
+        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM daily_rollups WHERE day_local = ?1", [day])
+            .map_err(|e| e.to_string())?;
+        let n = tx
+            .execute(
+                "WITH canon AS (
+                     SELECT o.metric_id, o.ts_utc, o.value,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY o.metric_id, o.ts_utc ORDER BY p.rank
+                            ) rn
+                     FROM observations o
+                     JOIN sources s ON s.id = o.source_id
+                     JOIN source_priority p ON p.source_kind = s.kind
+                          AND o.ts_utc >= max(p.period_start, ?1)
+                          AND o.ts_utc <  min(coalesce(p.period_end, ?2), ?2)
+                 ),
+                 d AS (SELECT metric_id, ts_utc, value FROM canon WHERE rn = 1),
+                 agg AS (SELECT metric_id, AVG(value) av, MIN(value) mn,
+                                MAX(value) mx, COUNT(*) n
+                         FROM d GROUP BY metric_id)
+                 INSERT INTO daily_rollups
+                     (metric_id, day_local, avg_value, min_value, max_value,
+                      n_samples, ts_min, ts_max)
+                 SELECT a.metric_id, ?3, a.av, a.mn, a.mx, a.n,
+                        (SELECT MIN(ts_utc) FROM d
+                          WHERE d.metric_id = a.metric_id AND d.value = a.mn),
+                        (SELECT MIN(ts_utc) FROM d
+                          WHERE d.metric_id = a.metric_id AND d.value = a.mx)
+                 FROM agg a",
+                rusqlite::params![a, b, day],
+            )
+            .map_err(|e| e.to_string())?;
+        // Clear the flag inside the SAME transaction as the recompute, so a
+        // crash mid-refresh leaves the day dirty and it is simply redone.
+        tx.execute("DELETE FROM rollup_dirty WHERE day_local = ?1", [day])
+            .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+        total_rows += n;
+    }
+    Ok((days.len(), total_rows))
 }
 
 // ---------- Min/Max Records (all-time hall of fame) ----------

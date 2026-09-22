@@ -133,6 +133,13 @@ def main() -> int:
                       AND s.value=r.max_value)
         """
     )
+    # A full rebuild supersedes every pending incremental one. The app's
+    # triggers keep `rollup_dirty` flagged as rows arrive (db.rs); leaving
+    # stale flags here would make the app redo work this script just did.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS rollup_dirty (day_local TEXT PRIMARY KEY) WITHOUT ROWID"
+    )
+    conn.execute("DELETE FROM rollup_dirty")
     conn.commit()
     n = conn.execute("SELECT COUNT(*) FROM daily_rollups").fetchone()[0]
     print(f"daily_rollups: {n:,} rows in {time.time() - t0:.1f}s")

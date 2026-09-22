@@ -427,6 +427,25 @@ pub fn run() {
                 db::backfill(bf_handle).await;
             });
             start_weather_listener(app.handle().clone());
+
+            // Keep daily_rollups current without anyone running a script.
+            // Cheap because it only touches days the triggers flagged: a
+            // recompute is ~6 ms, and a quiet minute marks at most one day.
+            // Runs shortly after launch so the backfill's days are picked up,
+            // then every few minutes forever.
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(90)).await;
+                loop {
+                    match db::refresh_dirty_rollups() {
+                        Ok((0, _)) => {}
+                        Ok((days, rows)) => {
+                            println!("Rollups refreshed: {} day(s), {} rows.", days, rows)
+                        }
+                        Err(e) => println!("Rollup refresh failed: {}", e),
+                    }
+                    tokio::time::sleep(Duration::from_secs(300)).await;
+                }
+            });
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())
