@@ -337,6 +337,15 @@ fn start_weather_listener(app_handle: AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // MUST be registered first. Once the app autostarts at login it is
+        // easy to launch a second copy from a shortcut; both would open the
+        // archive and both would subscribe to the Ambient socket. INSERT OR
+        // IGNORE keeps the data clean, but two tray icons and two recorders
+        // make the next fault much harder to read. A second launch now just
+        // opens the dashboard on the instance already running.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            open_dashboard(app);
+        }))
         .setup(|app| {
             println!("Starting SoledadWX backend...");
 
