@@ -491,6 +491,24 @@ while for context, then prune). Newest context at the bottom of each item.
 
 ## Deployment
 
+- [ ] **Monitor hung and was killed by Windows, 2026-09-22 10:26 (one occurrence).**
+  Event log: Application Hang 1002, "soledadwx-ui.exe stopped interacting with
+  Windows and was closed." Coincided exactly with a 2.1M-row WU import + full
+  rollup rebuild on the 1 GB Archive. 38 min of Recorder data lost (Backfill
+  restored it at 5-min cadence after a manual relaunch). No recurrence through
+  2026-10-03; Michael reports the tray as reliable in daily use.
+  Two latent weaknesses, both worth fixing regardless of the exact trigger:
+  1. **Every Tauri command is a sync `fn`**, so Tauri runs it on the MAIN thread
+     — the same thread that pumps the tray icon. A slow Archive query freezes
+     the whole Monitor. Fix: make them `async` / `spawn_blocking`.
+  2. **The Watchdog and tooltip track ARRIVAL, not PERSISTENCE.** In the read
+     loop, `last_data` is reset even when `rec.record()` fails, so "receiving
+     but not saving" looks healthy everywhere. Fix: track last successful
+     write, count consecutive write failures, and show it in the tooltip.
+  Also: nothing restarts the Monitor if it dies — consider a Task Scheduler
+  entry with restart-on-failure. Meanwhile: don't run big imports with the
+  Monitor up, or stop it first.
+
 - [ ] **Rebuild release exe.** Desktop shortcut still runs an older build
   (pre-Console/Records/footer/backfill and all of today's work). Run
   `npm run tauri build` to redeploy. Deferred while we keep making changes.
