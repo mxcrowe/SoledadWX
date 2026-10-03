@@ -26,6 +26,11 @@ static QUITTING: AtomicBool = AtomicBool::new(false);
 /// websocket task writes it, a timer task reads it.
 struct LiveState {
     last_data_epoch: Option<i64>,
+    /// Last reading actually SAVED to the Archive. Distinct from arrival: on
+    /// 2026-09-22 nothing could tell "receiving" from "recording".
+    last_write_epoch: Option<i64>,
+    /// Consecutive failed Archive writes; 0 when healthy.
+    write_failures: u32,
     tempf: Option<f64>,
     humidity: Option<f64>,
     wind_mph: Option<f64>,
@@ -35,6 +40,8 @@ struct LiveState {
 
 static LIVE: Mutex<LiveState> = Mutex::new(LiveState {
     last_data_epoch: None,
+    last_write_epoch: None,
+    write_failures: 0,
     tempf: None,
     humidity: None,
     wind_mph: None,
@@ -48,6 +55,10 @@ static LIVE: Mutex<LiveState> = Mutex::new(LiveState {
 /// lost its last line mid-word. Everything below is written to fit 63, and
 /// `clamp_tip` enforces it so a long value can never quietly eat a line again.
 const TIP_MAX: usize = 63;
+
+/// Consecutive failed Archive writes before the Recorder reopens its
+/// connection. Readings arrive ~1/min, so this is ~5 minutes of trouble.
+const REOPEN_AFTER: u32 = 5;
 
 fn clamp_tip(s: String) -> String {
     // Count UTF-16 units, which is what the shell counts — '°' and '⚠' are one
@@ -91,26 +102,41 @@ fn tooltip_text() -> String {
     // Line 2: the line that actually matters — proof the archive is being fed.
     // "running" and "recording" are different things, and this is the only
     // place the difference is visible without opening anything.
-    let line2 = match st.last_data_epoch {
-        Some(ts) => {
-            let age = (chrono::Utc::now().timestamp() - ts).max(0);
-            let ago = if age < 90 {
-                format!("{}s", age)
-            } else if age < 5400 {
-                format!("{}m", age / 60)
-            } else if age < 172_800 {
-                format!("{:.1}h", age as f64 / 3600.0)
-            } else {
-                format!("{}d", age / 86_400)
-            };
-            let warn = if age > DATA_STALL_SECS as i64 { " ⚠" } else { "" };
-            format!("Last {} ago{} · {} rec", ago, warn, st.recorded)
-        }
-        None => String::from(if st.connected {
-            "Connected — no reading yet"
+    // Ages are measured from the last SAVED reading, not the last one
+    // received: the tray is what Michael actually checks, so it must report
+    // recording. "Running" and "recording" are different things.
+    let age_of = |ts: i64| -> (String, i64) {
+        let age = (chrono::Utc::now().timestamp() - ts).max(0);
+        let s = if age < 90 {
+            format!("{}s", age)
+        } else if age < 5400 {
+            format!("{}m", age / 60)
+        } else if age < 172_800 {
+            format!("{:.1}h", age as f64 / 3600.0)
         } else {
-            "NOT CONNECTED ⚠"
-        }),
+            format!("{}d", age / 86_400)
+        };
+        (s, age)
+    };
+    let line2 = if st.write_failures > 0 {
+        // Data is arriving but not landing. Say so plainly.
+        match st.last_write_epoch {
+            Some(ts) => format!("NOT SAVING ⚠ {}× · last {}", st.write_failures, age_of(ts).0),
+            None => format!("NOT SAVING ⚠ {}×", st.write_failures),
+        }
+    } else {
+        match st.last_write_epoch {
+            Some(ts) => {
+                let (ago, age) = age_of(ts);
+                let warn = if age > DATA_STALL_SECS as i64 { " ⚠" } else { "" };
+                format!("Saved {} ago{} · {} rec", ago, warn, st.recorded)
+            }
+            None => String::from(if st.connected {
+                "Connected — no reading yet"
+            } else {
+                "NOT CONNECTED ⚠"
+            }),
+        }
     };
 
     clamp_tip(format!("{}
@@ -150,59 +176,75 @@ pub mod db;
 pub mod models;
 use models::AmbientReading;
 
+/// Run Archive work on a blocking worker thread.
+///
+/// A plain sync `#[tauri::command] fn` runs on the MAIN thread — the same one
+/// that pumps the tray icon — so one slow query can freeze the whole Monitor,
+/// and Windows kills it as hung (2026-09-22 10:26, during a 2.1M-row import).
+/// Every Archive-touching command goes through here instead.
+async fn off_main<T, F>(f: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|e| format!("worker failed: {e}"))?
+}
+
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
 #[tauri::command]
-fn db_status() -> Result<db::DbStatus, String> {
-    db::status().map_err(|e| e.to_string())
+async fn db_status() -> Result<db::DbStatus, String> {
+    off_main(|| db::status().map_err(|e| e.to_string())).await
 }
 
 #[tauri::command]
-fn series_window(
+async fn series_window(
     metric: String,
     start_ts: i64,
     end_ts: i64,
     max_points: i64,
 ) -> Result<Vec<db::SeriesPoint>, String> {
-    db::series_window(&metric, start_ts, end_ts, max_points)
+    off_main(move || db::series_window(&metric, start_ts, end_ts, max_points)).await
 }
 
 #[tauri::command]
-fn query_series(metric: String, start: String, end: String) -> Result<Vec<db::SeriesPoint>, String> {
-    db::series_daily(&metric, &start, &end)
+async fn query_series(metric: String, start: String, end: String) -> Result<Vec<db::SeriesPoint>, String> {
+    off_main(move || db::series_daily(&metric, &start, &end)).await
 }
 
 #[tauri::command]
-fn range_stats(metric: String, start: String, end: String) -> Result<db::RangeStats, String> {
-    db::range_stats(&metric, &start, &end)
+async fn range_stats(metric: String, start: String, end: String) -> Result<db::RangeStats, String> {
+    off_main(move || db::range_stats(&metric, &start, &end)).await
 }
 
 #[tauri::command]
-fn console_stats() -> Result<db::ConsoleStats, String> {
-    db::console_stats().map_err(|e| e.to_string())
+async fn console_stats() -> Result<db::ConsoleStats, String> {
+    off_main(|| db::console_stats().map_err(|e| e.to_string())).await
 }
 
 #[tauri::command]
-fn wind_rose(hours: i64) -> Result<db::WindRose, String> {
-    db::wind_rose(hours).map_err(|e| e.to_string())
+async fn wind_rose(hours: i64) -> Result<db::WindRose, String> {
+    off_main(move || db::wind_rose(hours).map_err(|e| e.to_string())).await
 }
 
 #[tauri::command]
-fn series_hours(metric: String, hours: i64) -> Result<Vec<db::SeriesPoint>, String> {
-    db::series_hours(&metric, hours)
+async fn series_hours(metric: String, hours: i64) -> Result<Vec<db::SeriesPoint>, String> {
+    off_main(move || db::series_hours(&metric, hours)).await
 }
 
 #[tauri::command]
-fn records() -> Result<Vec<db::RecordCategory>, String> {
-    db::records().map_err(|e| e.to_string())
+async fn records() -> Result<Vec<db::RecordCategory>, String> {
+    off_main(|| db::records().map_err(|e| e.to_string())).await
 }
 
 #[tauri::command]
-fn day_compare() -> Result<db::DayCompare, String> {
-    db::day_compare().map_err(|e| e.to_string())
+async fn day_compare() -> Result<db::DayCompare, String> {
+    off_main(|| db::day_compare().map_err(|e| e.to_string())).await
 }
 
 async fn run_websocket(app_handle: AppHandle, recorder: &mut Option<db::Recorder>) {
@@ -294,23 +336,48 @@ async fn run_websocket(app_handle: AppHandle, recorder: &mut Option<db::Recorder
                                         // Persist to the archive. A DB error must
                                         // never take down the live stream: log and
                                         // carry on; INSERT OR IGNORE makes retries
-                                        // safe after reconnects.
-                                        if let Some(rec) = recorder.as_mut() {
-                                            match rec.record(&reading) {
-                                                Ok(n) => println!("Recorded {} metrics to archive.", n),
-                                                Err(e) => println!("Archive write failed: {:?}", e),
-                                            }
-                                        }
+                                        // safe after reconnects. But a failure must
+                                        // be VISIBLE (tooltip) and self-healing:
+                                        // after REOPEN_AFTER consecutive failures the
+                                        // Recorder's connection is discarded and
+                                        // reopened — which also rescues a Recorder
+                                        // that failed to open at launch.
+                                        let saved = match recorder.as_mut() {
+                                            Some(rec) => match rec.record(&reading) {
+                                                Ok(n) => {
+                                                    println!("Recorded {} metrics to archive.", n);
+                                                    true
+                                                }
+                                                Err(e) => {
+                                                    println!("Archive write failed: {:?}", e);
+                                                    false
+                                                }
+                                            },
+                                            None => false,
+                                        };
 
-                                        // Feed the tray tooltip and reset the
-                                        // data-stall clock.
+                                        // Arrival resets the stream Watchdog; saving
+                                        // is tracked separately for the tooltip.
                                         last_data = std::time::Instant::now();
+                                        let mut reopen = false;
                                         if let Ok(mut g) = LIVE.lock() {
-                                            g.last_data_epoch = Some(chrono::Utc::now().timestamp());
+                                            let now = chrono::Utc::now().timestamp();
+                                            g.last_data_epoch = Some(now);
                                             g.tempf = reading.tempf;
                                             g.humidity = reading.humidity.map(f64::from);
                                             g.wind_mph = reading.windspeedmph;
-                                            g.recorded += 1;
+                                            if saved {
+                                                g.last_write_epoch = Some(now);
+                                                g.write_failures = 0;
+                                                g.recorded += 1;
+                                            } else {
+                                                g.write_failures += 1;
+                                                reopen = g.write_failures % REOPEN_AFTER == 0;
+                                            }
+                                        }
+                                        if reopen {
+                                            println!("{} failed writes in a row — reopening the Recorder.", REOPEN_AFTER);
+                                            *recorder = db::Recorder::open().ok();
                                         }
 
                                         // Emit it over the bridge to React!

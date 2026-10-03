@@ -491,7 +491,8 @@ while for context, then prune). Newest context at the bottom of each item.
 
 ## Deployment
 
-- [ ] **Monitor hung and was killed by Windows, 2026-09-22 10:26 (one occurrence).**
+- [x] **Monitor hung and was killed by Windows, 2026-09-22 10:26 (one occurrence).**
+  **Fixed 2026-10-03** (items 1 and 2; the restart supervisor is still open below).
   Event log: Application Hang 1002, "soledadwx-ui.exe stopped interacting with
   Windows and was closed." Coincided exactly with a 2.1M-row WU import + full
   rollup rebuild on the 1 GB Archive. 38 min of Recorder data lost (Backfill
@@ -505,7 +506,12 @@ while for context, then prune). Newest context at the bottom of each item.
      loop, `last_data` is reset even when `rec.record()` fails, so "receiving
      but not saving" looks healthy everywhere. Fix: track last successful
      write, count consecutive write failures, and show it in the tooltip.
-  Also: nothing restarts the Monitor if it dies — consider a Task Scheduler
+  Fix shipped: `off_main()` runs every Archive command via `spawn_blocking`;
+  `LiveState` gained `last_write_epoch`/`write_failures`; the tooltip reports
+  "Saved Ns ago" or "NOT SAVING ⚠ N×"; the Recorder reopens its connection
+  every `REOPEN_AFTER` (5) consecutive failures. The failure path is NOT yet
+  exercised live — deliberately, since testing it means dropping readings.
+- [ ] **Still open from the above:** nothing restarts the Monitor if it dies — consider a Task Scheduler
   entry with restart-on-failure. Meanwhile: don't run big imports with the
   Monitor up, or stop it first.
 
