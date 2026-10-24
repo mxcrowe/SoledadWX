@@ -511,6 +511,14 @@ while for context, then prune). Newest context at the bottom of each item.
   "Saved Ns ago" or "NOT SAVING ⚠ N×"; the Recorder reopens its connection
   every `REOPEN_AFTER` (5) consecutive failures. The failure path is NOT yet
   exercised live — deliberately, since testing it means dropping readings.
+- [ ] **Tray → Quit doesn't close the Archive cleanly (found 2026-10-23).** The quit
+  handler calls `app.exit(0)`, which ends the process without dropping the Recorder's
+  `Connection`, so the WAL is never checkpointed (30.8 MB `-wal` left in place). SQLite
+  recovers it safely on the next open, so this costs nothing day to day. But it means a
+  "stopped" Monitor leaves the Archive as THREE files that must travel together, which
+  is a trap for any file copy (see the G:→D: move, where the copy uses `VACUUM INTO`
+  for this reason). Fix: on Quit, signal the Recorder task to drop its connection
+  (or run `PRAGMA wal_checkpoint(TRUNCATE)`) before `app.exit`.
 - [ ] **Still open from the above:** nothing restarts the Monitor if it dies — consider a Task Scheduler
   entry with restart-on-failure. Meanwhile: don't run big imports with the
   Monitor up, or stop it first.
