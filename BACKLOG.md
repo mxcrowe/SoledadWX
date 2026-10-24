@@ -511,6 +511,17 @@ while for context, then prune). Newest context at the bottom of each item.
   "Saved Ns ago" or "NOT SAVING ⚠ N×"; the Recorder reopens its connection
   every `REOPEN_AFTER` (5) consecutive failures. The failure path is NOT yet
   exercised live — deliberately, since testing it means dropping readings.
+- [x] **The Monitor died silently at 2026-10-23 22:33. Cause: Fathom launched it (found 2026-10-24).**
+  At Window 5 step 8, Fathom started the Monitor with `Start-Process` from its Claude Code shell.
+  Those shells run inside a **Windows job object** owned by `claude.exe` (verified: `IsProcessInJob` = true;
+  ancestry pwsh ← cmd ← claude ← claude ← explorer). When the Claude window closed (22:33:25, PersistentWindows
+  event), the job was torn down and the Monitor with it, 25 s after its last reading. No crash or hang record,
+  because nothing crashed. Michael's 06:30 restart from the Desktop shortcut has `explorer.exe` as its parent, so it's safe.
+  The earlier Fathom-launched instances (2026-09-22 11:04, 2026-10-03 08:22, 2026-10-23 20:52) were exposed in the same way.
+  Backfill recovered the 8-hour gap (+2,304 values; no canonical gap over 15 min).
+  **Rule: an agent never starts the Monitor from its own shell.** Michael starts it from a shortcut. If an agent
+  must, it hands the launch to the desktop shell (e.g. `explorer.exe <shortcut>`) and **verifies the parent is
+  the session's explorer.exe** before calling it done.
 - [ ] **Tray → Quit doesn't close the Archive cleanly (found 2026-10-23).** The quit
   handler calls `app.exit(0)`, which ends the process without dropping the Recorder's
   `Connection`, so the WAL is never checkpointed (30.8 MB `-wal` left in place). SQLite
