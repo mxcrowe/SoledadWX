@@ -6,10 +6,13 @@
 // can show that, and neither can an hourly one. What matters is several
 // traces on ONE time axis at the finest resolution the window allows.
 //
-// Each metric keeps its own y-scale (normalised into the same box) because
-// the point is correlation in TIME, not comparison of magnitudes — °F and
-// W/m² share no axis worth drawing. Each trace carries its own labelled
-// value and range in the readout so no number is lost to the normalising.
+// Traces in DIFFERENT units keep their own y-scale (normalised into the same
+// box) because the point is correlation in TIME — °F and W/m² share no axis
+// worth drawing. Traces in the SAME unit share one scale: temperature and
+// apparent temp on separate scales made a 1.6 F drift and a 4 F swing look
+// the same size (Michael, 2026-10-26; Cumulus never did that). Each trace
+// carries its own labelled value and range in the readout so no number is
+// lost to the normalising.
 //
 // Backend: db::series_window, which snaps to a legible bucket and returns raw
 // observations whenever the window is short enough to allow it.
@@ -132,6 +135,22 @@ export default function Charts() {
     return { t0, t1: tEnd > t0 ? tEnd : t0 + 1 };
   }, [data, activeKey]);
 
+  // One [lo, hi] per display unit across the active traces; bearings keep a
+  // fixed compass scale.
+  const scales = useMemo(() => {
+    const out: Record<string, [number, number]> = {};
+    for (const m of active) {
+      const s = data[m];
+      const def = TRACES.find(tr => tr.metric === m);
+      if (!s || s.length === 0 || !def || def.mode === "dir") continue;
+      const vals = traceValues(def, s);
+      const key = displayUnit(def.unit);
+      const [lo, hi] = out[key] ?? [Infinity, -Infinity];
+      out[key] = [Math.min(lo, ...vals), Math.max(hi, ...vals)];
+    }
+    return out;
+  }, [data, activeKey]);
+
   const x = (t: number) =>
     view ? PL + ((t - view.t0) / (view.t1 - view.t0)) * (W - PL - PR) : 0;
 
@@ -159,8 +178,8 @@ export default function Charts() {
       <h2 className="page-title">Charts</h2>
       <p className="page-sub">
         Several metrics on one time axis, at the finest resolution the window allows.
-        Each trace is scaled to its own range — the point is when things move together,
-        not how big they are.
+        Traces in the same unit share a scale; different units are each scaled to fit —
+        the point is when things move together.
       </p>
 
       <div className="ch-controls">
@@ -212,9 +231,7 @@ export default function Charts() {
             const def = TRACES.find(tr => tr.metric === m);
             if (!s || s.length === 0 || !def) return null;
             const vals = traceValues(def, s);
-            // Bearings keep a fixed compass scale; everything else is scaled
-            // to its own range.
-            const [lo, hi] = def.mode === "dir" ? [0, 360] : [Math.min(...vals), Math.max(...vals)];
+            const [lo, hi] = def.mode === "dir" ? [0, 360] : scales[displayUnit(def.unit)];
             const span = hi - lo || 1;
             // Each trace gets 88% of the box, inset, so a flat trace does not
             // sit welded to the frame edge.

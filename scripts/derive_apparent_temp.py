@@ -18,6 +18,9 @@ change all three.
 
     apparenttempf  Australian BOM AT. Defined at every temperature, and the
                    only one that sees wind. Missing wind is treated as calm.
+                   Wind is the source's MEAN over the 10 minutes ending at the
+                   reading (AT_WIND_WINDOW_S), as the formula intends; the
+                   reading's own wind made AT swing ~0.56 F per mph of gust.
     humidexf       Environment Canada humidex. None below a 10 C dewpoint.
     wetbulbf       Stull (2011). None outside 5-99% RH or -20..50 C.
 
@@ -45,6 +48,25 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import wxdb
 
 MPH_TO_MS = 0.44704
+
+# Mirrors AT_WIND_WINDOW_SECS in db.rs: AT takes the mean wind over the
+# window (ts - 600, ts], from the same source.
+AT_WIND_WINDOW_S = 600
+
+
+def rolling_mean_wind(rows):
+    """Per row of (ts, ..., wind, ...) sorted by ts, the mean wind over the AT
+    window ending at that row. `rows` yields (ts, wind); None winds are skipped."""
+    from collections import deque
+    win, total, out = deque(), 0.0, []
+    for ts, w in rows:
+        if w is not None:
+            win.append((ts, w))
+            total += w
+        while win and win[0][0] <= ts - AT_WIND_WINDOW_S:
+            total -= win.popleft()[1]
+        out.append(total / len(win) if win else None)
+    return out
 
 
 def sat_vp_hpa(tc: float) -> float:
@@ -129,16 +151,17 @@ def main() -> int:
                  MAX(CASE WHEN o.metric_id=? THEN o.value END)
                FROM observations o
                WHERE o.source_id=? AND o.metric_id IN (?,?,?,?)
-               GROUP BY o.ts_utc""",
+               GROUP BY o.ts_utc ORDER BY o.ts_utc""",
             (mids["tempf"], mids["humidity"], mids["windspeedmph"], mids["dewpointf"],
              sid,
              mids["tempf"], mids["humidity"], mids["windspeedmph"], mids["dewpointf"]),
         ).fetchall()
 
         batch, made = [], 0
-        for ts, t, rh, w, dew in rows:
+        means = rolling_mean_wind((r[0], r[3]) for r in rows)
+        for (ts, t, rh, w, dew), w_mean in zip(rows, means):
             for name, val in (
-                ("apparenttempf", apparent_temp_f(t, rh, w)),
+                ("apparenttempf", apparent_temp_f(t, rh, w_mean)),
                 ("humidexf", humidex_f(t, dew)),
                 ("wetbulbf", wet_bulb_f(t, rh)),
             ):

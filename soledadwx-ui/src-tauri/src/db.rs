@@ -193,9 +193,40 @@ fn wet_bulb_f(temp_f: Option<f64>, rh: Option<f64>) -> Option<f64> {
     Some(wb_c * 9.0 / 5.0 + 32.0)
 }
 
+/// Apparent temperature takes the MEAN wind over this window, not the
+/// reading's own. The BOM formula is calibrated against average wind; fed
+/// one-minute snapshots on this ridge, AT swung ~0.56 F per mph of gust
+/// while the thermometer sat still (4 F in one minute on 2026-10-26).
+/// Mirrors AT_WIND_WINDOW_S in scripts/derive_apparent_temp.py.
+const AT_WIND_WINDOW_SECS: i64 = 600;
+
+/// Mean of `prior` wind readings and `current`, either of which may be absent.
+fn mean_wind(prior_sum: f64, prior_n: i64, current: Option<f64>) -> Option<f64> {
+    let (sum, n) = match current {
+        Some(w) => (prior_sum + w, prior_n + 1),
+        None => (prior_sum, prior_n),
+    };
+    (n > 0).then(|| sum / n as f64)
+}
+
+/// The source's mean wind over the AT window ending at `ts`, from the Archive
+/// plus the reading about to be written.
+fn archive_mean_wind(conn: &Connection, source_id: i64, wind_mid: i64, ts: i64, current: Option<f64>) -> Option<f64> {
+    let (sum, n): (f64, i64) = conn
+        .query_row(
+            "SELECT coalesce(SUM(value), 0), COUNT(*) FROM observations
+             WHERE metric_id = ?1 AND source_id = ?2 AND ts_utc > ?3 - ?4 AND ts_utc < ?3",
+            rusqlite::params![wind_mid, source_id, ts, AT_WIND_WINDOW_SECS],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap_or((0.0, 0));
+    mean_wind(sum, n, current)
+}
+
 // Canonical metric name -> value for one reading. Shared by the live
-// recorder and the backfill so both map fields identically.
-fn value_pairs(r: &AmbientReading) -> [(&'static str, Option<f64>); 26] {
+// recorder and the backfill so both map fields identically. `mean_wind_mph`
+// is the AT window's mean (see AT_WIND_WINDOW_SECS).
+fn value_pairs(r: &AmbientReading, mean_wind_mph: Option<f64>) -> [(&'static str, Option<f64>); 26] {
     [
         ("tempf", r.tempf),
         ("humidity", r.humidity.map(f64::from)),
@@ -226,7 +257,7 @@ fn value_pairs(r: &AmbientReading) -> [(&'static str, Option<f64>); 26] {
         // The apparent-temperature family. AT is defined at all temperatures
         // and is the only one that sees wind; humidex and wet bulb are the
         // moisture-only companions. See the helpers above.
-        ("apparenttempf", apparent_temp_f(r.tempf, r.humidity.map(f64::from), r.windspeedmph)),
+        ("apparenttempf", apparent_temp_f(r.tempf, r.humidity.map(f64::from), mean_wind_mph)),
         ("humidexf", humidex_f(r.tempf, r.dewPoint)),
         ("wetbulbf", wet_bulb_f(r.tempf, r.humidity.map(f64::from))),
     ]
@@ -306,7 +337,8 @@ impl Recorder {
     /// Persist one reading. Returns number of metric rows written.
     pub fn record(&mut self, r: &AmbientReading) -> Result<usize, rusqlite::Error> {
         let ts_utc = r.dateutc / 1000;
-        let values = value_pairs(r);
+        let wind = archive_mean_wind(&self.conn, self.source_id, self.metric_ids["windspeedmph"], ts_utc, r.windspeedmph);
+        let values = value_pairs(r, wind);
         let tx = self.conn.transaction()?;
         let mut n = 0;
         {
@@ -1758,7 +1790,16 @@ async fn fill_range(
                         continue;
                     }
                     let ts = reading.dateutc / 1000;
-                    for (name, val) in value_pairs(reading) {
+                    // The hole has no archive rows, so the AT window's wind
+                    // comes from this page itself.
+                    let (sum, n) = page
+                        .iter()
+                        .filter(|o| o.dateutc < reading.dateutc
+                            && o.dateutc > reading.dateutc - AT_WIND_WINDOW_SECS * 1000)
+                        .filter_map(|o| o.windspeedmph)
+                        .fold((0.0, 0), |(s, n), w| (s + w, n + 1));
+                    let wind = mean_wind(sum, n, reading.windspeedmph);
+                    for (name, val) in value_pairs(reading, wind) {
                         if let (Some(v), Some(&mid)) = (val, mids.get(name)) {
                             if let Ok(n) = conn.execute(
                                 "INSERT OR IGNORE INTO observations(metric_id, ts_utc, source_id, value)
