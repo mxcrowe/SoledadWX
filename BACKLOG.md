@@ -554,6 +554,23 @@ while for context, then prune). Newest context at the bottom of each item.
   make it self-truthing (compute the median inter-arrival from the archive) so a
   future station at a different cadence stays honest.
 
+## Housekeeping (from the G:→D: move, 2026-10-26)
+
+The move shrank SoledadWX from ~19 GB to 4.2 GB. ~90% of that was one folder.
+
+- [ ] **`soledadwx-ui/src-tauri/target/` is disposable, and Cargo never prunes it.** It had grown to ~16 GB:
+  every dependency upgrade, toolchain update and `npm run tauri dev` session (debug builds with incremental
+  caches, the main source of growth) left a layer behind. A fresh release-only build is ~1.8 GB.
+  **Practice:** when `target/` passes ~5 GB, run `cargo clean` from `src-tauri/` (PowerShell). A full release
+  rebuild takes ~1.5 min. Rebuilding while the Monitor runs: rename the running exe aside first (see 2026-10-03).
+- [x] **SyncBack already excludes `target\` and `node_modules\`** (confirmed by Michael, 2026-10-26).
+- [ ] **Archive `VACUUM`: at most yearly.** The 2026-10-23 `VACUUM INTO` reclaimed only ~12% (1.07 GB → 0.91 GB).
+  Needs the Monitor stopped. Prefer `VACUUM INTO` a new file plus `integrity_check`, then swap, over in-place.
+- [x] Done 2026-10-26: dropped the `_snap_rollups_prewu` rollback table (from the 2026-09-22 WU import);
+  Michael deleted `data/soledadwx-backup-2026-07-24-pre-knots-fix.db` (the knots fix was validated long ago,
+  and a copy exists on the F: backup); the obsolete `soledadwx_env` venv was retired with G: (recipe kept in
+  `Archive_TracerBullet/soledadwx_env-freeze-2026-10-24.txt`).
+
 ## Security / hygiene
 
 - [ ] **Ambient app key logged in cleartext.** `src-tauri/src/lib.rs` `println!`s
