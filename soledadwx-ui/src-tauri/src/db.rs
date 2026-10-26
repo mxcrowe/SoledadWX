@@ -1227,8 +1227,25 @@ enum Basis {
     Raw,
 }
 
-// Instantaneous all-time extreme from daily_rollups (value + the epoch it occurred).
-fn inst_ext(conn: &Connection, metric: &str, want_max: bool, basis: Basis) -> Option<(f64, i64)> {
+/// Which days a record is drawn from: civil-local days in `[from, to)`,
+/// optionally only one calendar month ("01".."12") of every year.
+struct Within<'a> {
+    from: &'a str,
+    to: &'a str,
+    month: Option<&'a str>,
+}
+
+impl Within<'_> {
+    const ALL: Within<'static> = Within { from: "0000-00-00", to: "9999-99-99", month: None };
+}
+
+/// The `WHERE` tail for `Within`, bound as ?2..?4 after the metric name.
+const WITHIN_SQL: &str = "AND r.day_local >= ?2 AND r.day_local < ?3
+                          AND (?4 IS NULL OR substr(r.day_local, 6, 2) = ?4)";
+
+// Instantaneous extreme from daily_rollups (value + the epoch it occurred).
+// Ties go to the earliest.
+fn inst_ext(conn: &Connection, metric: &str, want_max: bool, basis: Basis, within: &Within) -> Option<(f64, i64)> {
     let (vcol, tscol, ord) = match (want_max, basis) {
         (true, Basis::Qc) => ("qc_max", "qc_ts_max", "DESC"),
         (false, Basis::Qc) => ("qc_min", "qc_ts_min", "ASC"),
@@ -1239,9 +1256,10 @@ fn inst_ext(conn: &Connection, metric: &str, want_max: bool, basis: Basis) -> Op
         &format!(
             "SELECT r.{vcol}, r.{tscol} FROM daily_rollups r
              JOIN metrics m ON m.id = r.metric_id
-             WHERE m.name = ?1 AND r.{vcol} IS NOT NULL ORDER BY r.{vcol} {ord} LIMIT 1"
+             WHERE m.name = ?1 AND r.{vcol} IS NOT NULL {WITHIN_SQL}
+             ORDER BY r.{vcol} {ord}, r.{tscol} LIMIT 1"
         ),
-        [metric],
+        rusqlite::params![metric, within.from, within.to, within.month],
         |r| Ok((r.get(0)?, r.get(1)?)),
     )
     .ok()
@@ -1250,7 +1268,7 @@ fn inst_ext(conn: &Connection, metric: &str, want_max: bool, basis: Basis) -> Op
 // Daily-derived extreme (e.g. highest daily minimum): value + the day it happened.
 // `expr` is written against the QC columns (r.qc_min / r.qc_max); the raw
 // version substitutes the raw ones.
-fn day_ext(conn: &Connection, metric: &str, expr: &str, want_max: bool, basis: Basis) -> Option<(f64, String)> {
+fn day_ext(conn: &Connection, metric: &str, expr: &str, want_max: bool, basis: Basis, within: &Within) -> Option<(f64, String)> {
     let ord = if want_max { "DESC" } else { "ASC" };
     let expr = match basis {
         Basis::Qc => expr.to_string(),
@@ -1260,9 +1278,10 @@ fn day_ext(conn: &Connection, metric: &str, expr: &str, want_max: bool, basis: B
         &format!(
             "SELECT {expr} AS v, r.day_local FROM daily_rollups r
              JOIN metrics m ON m.id = r.metric_id
-             WHERE m.name = ?1 AND v IS NOT NULL ORDER BY v {ord} LIMIT 1"
+             WHERE m.name = ?1 AND v IS NOT NULL {WITHIN_SQL}
+             ORDER BY v {ord}, r.day_local LIMIT 1"
         ),
-        [metric],
+        rusqlite::params![metric, within.from, within.to, within.month],
         |r| Ok((r.get(0)?, r.get(1)?)),
     )
     .ok()
@@ -1274,8 +1293,8 @@ fn differs<T>(headline: f64, raw: Option<(f64, T)>) -> Option<(f64, T)> {
 }
 
 fn inst_row(conn: &Connection, label: &str, metric: &str, unit: &str, max: bool) -> Option<RecordRow> {
-    let (v, ts) = inst_ext(conn, metric, max, Basis::Qc)?;
-    let raw = differs(v, inst_ext(conn, metric, max, Basis::Raw));
+    let (v, ts) = inst_ext(conn, metric, max, Basis::Qc, &Within::ALL)?;
+    let raw = differs(v, inst_ext(conn, metric, max, Basis::Raw, &Within::ALL));
     Some(RecordRow {
         label: label.into(), value: v, unit: unit.into(), when_ts: Some(ts), when_day: None,
         raw_value: raw.map(|r| r.0), raw_when_ts: raw.map(|r| r.1), raw_when_day: None,
@@ -1283,8 +1302,8 @@ fn inst_row(conn: &Connection, label: &str, metric: &str, unit: &str, max: bool)
 }
 
 fn day_row(conn: &Connection, label: &str, metric: &str, expr: &str, unit: &str, max: bool) -> Option<RecordRow> {
-    let (v, d) = day_ext(conn, metric, expr, max, Basis::Qc)?;
-    let raw = differs(v, day_ext(conn, metric, expr, max, Basis::Raw));
+    let (v, d) = day_ext(conn, metric, expr, max, Basis::Qc, &Within::ALL)?;
+    let raw = differs(v, day_ext(conn, metric, expr, max, Basis::Raw, &Within::ALL));
     let (raw_value, raw_when_day) = raw.map_or((None, None), |(rv, rd)| (Some(rv), Some(rd)));
     Some(RecordRow {
         label: label.into(), value: v, unit: unit.into(), when_ts: None, when_day: Some(d),
@@ -1355,6 +1374,129 @@ pub fn records() -> Result<Vec<RecordCategory>, rusqlite::Error> {
     cats.push(RecordCategory { name: "Solar".into(), rows: solar.into_iter().flatten().collect() });
 
     Ok(cats)
+}
+
+// ---------- Soledad Extremes (this month / this year, live) ----------
+//
+// The rolling sibling of Records: the same QC'd extremes, drawn from four
+// windows at once: this month, every year's same calendar month (so "the
+// warmest October night on record" is visible), this year, and all time.
+// Today's rollup is refreshed every few minutes by the Monitor, so the page
+// is live to within one refresh.
+
+/// One cell: an extreme and when it happened.
+#[derive(serde::Serialize)]
+pub struct ExtremesCell {
+    pub value: f64,
+    pub when_ts: Option<i64>,     // instantaneous extremes
+    pub when_day: Option<String>, // daily-derived extremes
+}
+
+#[derive(serde::Serialize)]
+pub struct ExtremesRow {
+    pub label: String,
+    pub unit: String,
+    pub month: Option<ExtremesCell>,
+    pub month_record: Option<ExtremesCell>,
+    pub year: Option<ExtremesCell>,
+    pub all_time: Option<ExtremesCell>,
+}
+
+#[derive(serde::Serialize)]
+pub struct ExtremesGroup {
+    pub name: String,
+    pub rows: Vec<ExtremesRow>,
+}
+
+#[derive(serde::Serialize)]
+pub struct ExtremesReport {
+    pub month_start: String, // civil-local ISO date
+    pub year_start: String,
+    pub groups: Vec<ExtremesGroup>,
+}
+
+/// What a row measures.
+enum Measure {
+    /// The single highest or lowest reading of any of `metrics`. Rain rate
+    /// needs two: the Ambient station sends it as `hourlyrainin`.
+    Instant { metrics: &'static [&'static str], max: bool },
+    /// A day-level value, such as the highest daily minimum. `expr` is
+    /// written against the QC columns, as for Records.
+    Daily { metric: &'static str, expr: &'static str, max: bool },
+}
+
+/// (group, label, unit, measure). Units are storage units; the Dashboard
+/// converts wind to knots.
+const EXTREMES_ROWS: &[(&str, &str, &str, Measure)] = &[
+    ("Temperature", "Highest temperature", "°F", Measure::Instant { metrics: &["tempf"], max: true }),
+    ("Temperature", "Lowest temperature", "°F", Measure::Instant { metrics: &["tempf"], max: false }),
+    ("Temperature", "Warmest night (highest minimum)", "°F", Measure::Daily { metric: "tempf", expr: "r.qc_min", max: true }),
+    ("Temperature", "Coolest day (lowest maximum)", "°F", Measure::Daily { metric: "tempf", expr: "r.qc_max", max: false }),
+    ("Temperature", "Largest daily range", "°F", Measure::Daily { metric: "tempf", expr: "(r.qc_max - r.qc_min)", max: true }),
+    ("Humidity", "Highest dew point", "°F", Measure::Instant { metrics: &["dewpointf"], max: true }),
+    ("Humidity", "Lowest dew point", "°F", Measure::Instant { metrics: &["dewpointf"], max: false }),
+    ("Humidity", "Lowest humidity", "%", Measure::Instant { metrics: &["humidity"], max: false }),
+    ("Wind", "Highest gust", "mph", Measure::Instant { metrics: &["windgustmph"], max: true }),
+    ("Wind", "Highest sustained wind", "mph", Measure::Instant { metrics: &["windspeedmph"], max: true }),
+    ("Rainfall", "Wettest day", "in", Measure::Daily { metric: "dailyrainin", expr: "r.qc_max", max: true }),
+    ("Rainfall", "Highest rain rate", "in/hr", Measure::Instant { metrics: &["rainratein", "hourlyrainin"], max: true }),
+    ("Pressure", "Highest pressure", "inHg", Measure::Instant { metrics: &["baromrelin"], max: true }),
+    ("Pressure", "Lowest pressure", "inHg", Measure::Instant { metrics: &["baromrelin"], max: false }),
+    ("Solar", "Highest solar radiation", "W/m²", Measure::Instant { metrics: &["solarradiation"], max: true }),
+    ("Solar", "Highest UV index", "index", Measure::Instant { metrics: &["uv"], max: true }),
+];
+
+fn extremes_cell(conn: &Connection, measure: &Measure, within: &Within) -> Option<ExtremesCell> {
+    match *measure {
+        Measure::Instant { metrics, max } => {
+            let better = |a: &(f64, i64), b: &(f64, i64)| if max { a.0 > b.0 } else { a.0 < b.0 };
+            let (value, ts) = metrics
+                .iter()
+                .filter_map(|m| inst_ext(conn, m, max, Basis::Qc, within))
+                .reduce(|best, x| if better(&x, &best) { x } else { best })?;
+            Some(ExtremesCell { value, when_ts: Some(ts), when_day: None })
+        }
+        Measure::Daily { metric, expr, max } => {
+            let (value, day) = day_ext(conn, metric, expr, max, Basis::Qc, within)?;
+            Some(ExtremesCell { value, when_ts: None, when_day: Some(day) })
+        }
+    }
+}
+
+pub fn extremes() -> Result<ExtremesReport, String> {
+    let conn = Connection::open(db_path()).map_err(|e| e.to_string())?;
+    let (month_start, month_end, year_start, year_end, month): (String, String, String, String, String) = conn
+        .query_row(
+            "SELECT date('now', 'localtime', 'start of month'),
+                    date('now', 'localtime', 'start of month', '+1 month'),
+                    date('now', 'localtime', 'start of year'),
+                    date('now', 'localtime', 'start of year', '+1 year'),
+                    strftime('%m', 'now', 'localtime')",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .map_err(|e| e.to_string())?;
+
+    let this_month = Within { from: &month_start, to: &month_end, month: None };
+    let same_month = Within { month: Some(&month), ..Within::ALL };
+    let this_year = Within { from: &year_start, to: &year_end, month: None };
+
+    let mut groups: Vec<ExtremesGroup> = Vec::new();
+    for (group, label, unit, measure) in EXTREMES_ROWS {
+        let row = ExtremesRow {
+            label: (*label).into(),
+            unit: (*unit).into(),
+            month: extremes_cell(&conn, measure, &this_month),
+            month_record: extremes_cell(&conn, measure, &same_month),
+            year: extremes_cell(&conn, measure, &this_year),
+            all_time: extremes_cell(&conn, measure, &Within::ALL),
+        };
+        match groups.last_mut() {
+            Some(g) if g.name == *group => g.rows.push(row),
+            _ => groups.push(ExtremesGroup { name: (*group).into(), rows: vec![row] }),
+        }
+    }
+    Ok(ExtremesReport { month_start, year_start, groups })
 }
 
 // ---------- Auto-backfill on launch ----------
@@ -2184,5 +2326,36 @@ mod synopsis_tests {
         near(kt(s.wind.mean_mph), 1.2, 0.05, "average speed (kt)");
         near(kt(s.wind.run_mi), 911.2, 1.0, "wind run (nm)");
         assert_eq!(s.wind.gale_days, 0, "gale days");
+    }
+}
+
+#[cfg(test)]
+mod extremes_tests {
+    use super::*;
+
+    /// Each window nests inside the next, so a narrower window can never beat
+    /// a wider one: month <= year <= all time, and month <= same-month record
+    /// <= all time (reversed for lows). Needs the Archive.
+    #[test]
+    #[ignore = "reads the live Archive"]
+    fn windows_nest() {
+        let report = extremes().expect("extremes report");
+        for g in &report.groups {
+            for r in &g.rows {
+                let v = |c: &Option<ExtremesCell>| c.as_ref().map(|c| c.value);
+                println!("{:32} month {:?}  month-record {:?}  year {:?}  all {:?}",
+                    r.label, v(&r.month), v(&r.month_record), v(&r.year), v(&r.all_time));
+                let low = r.label.starts_with("Lowest") || r.label.starts_with("Coolest");
+                let beats = |a: Option<f64>, b: Option<f64>| match (a, b) {
+                    (Some(a), Some(b)) => if low { a < b - 1e-9 } else { a > b + 1e-9 },
+                    (Some(_), None) => true,
+                    _ => false,
+                };
+                assert!(!beats(v(&r.month), v(&r.year)), "{}: month beats year", r.label);
+                assert!(!beats(v(&r.year), v(&r.all_time)), "{}: year beats all time", r.label);
+                assert!(!beats(v(&r.month), v(&r.month_record)), "{}: month beats month record", r.label);
+                assert!(!beats(v(&r.month_record), v(&r.all_time)), "{}: month record beats all time", r.label);
+            }
+        }
     }
 }

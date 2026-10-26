@@ -18,7 +18,7 @@ decade-plus deeper than a typical MXUI site, which matters for Records/Extremes/
 | 8 | **Analyze & Compare** | ⏳ design TBD | **NEW capability, not in Cumulus.** Comparison workbench: compare dates/periods/records over time (July 2010 vs July 2020; this-day-in-history across 17 yrs; decade-over-decade drift). Replaces the user's old by-hand value-copying. (Nav item currently points at the Analyst-v1 plotter as a stand-in) | own idea |
 | 9 | **Gauges** | ⏳ deferred toy | Full-page SteelSeries steam-gauge instrument panel — the ambient "fish tank" | CustomGauges.png |
 | 10 | **Barograph** | ⏳ deferred toy | Bermuda rotating-drum barograph, ink trace of recent pressure; brass/glass via AI textures + SVG | uncle's barograph |
-| 11 | **Soledad Extremes** | ⏳ planned | **Current-period** bests: this-month / this-year highest-lowest per parameter with dates, live-updating. Distinct from Records' all-time statics | Beaumaris extremes.php |
+| 11 | **Soledad Extremes** | ✅ built 2026-10-26 | **Current-period** bests: this month / *this calendar month in every year* / this year / all time, per parameter with dates, refreshed every 5 min; badges when the current month or year holds a record. Same QC'd extremes as Records. Distinct from Records' all-time statics | Beaumaris extremes.php |
 
 ## Key distinctions (locked)
 

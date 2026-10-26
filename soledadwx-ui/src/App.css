@@ -453,3 +453,15 @@ p {
 }
 .syn-proxy { color: #e0b060; }
 .syn-warn { color: #e0b060; }
+
+/* Soledad Extremes */
+.ext-table { width: 100%; border-collapse: collapse; }
+.ext-table th { text-align: right; font-weight: 600; font-size: 0.85rem; color: #9fb4e8; padding: 0.4rem; border-bottom: 1px solid rgba(128,128,128,0.3); }
+.ext-table td { padding: 0.45rem 0.4rem; border-bottom: 1px solid rgba(128,128,128,0.12); vertical-align: top; }
+.ext-group td { padding-top: 1rem; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.6; border-bottom: none; }
+.ext-cell { text-align: right; white-space: nowrap; }
+.ext-none { opacity: 0.35; }
+.ext-value { font-weight: 600; font-variant-numeric: tabular-nums; }
+.ext-when { font-size: 0.75rem; opacity: 0.55; }
+.ext-new { background: rgba(224,176,96,0.12); }
+.ext-badge { font-size: 0.72rem; color: #e0b060; font-weight: 600; }

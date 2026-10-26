@@ -15,7 +15,7 @@ interface RecordRow {
 }
 interface RecordCategory { name: string; rows: RecordRow[] }
 
-const dp = (unit: string) =>
+export const dp = (unit: string) =>
   unit === "mi" || unit === "index" || unit === "%" ? (unit === "%" ? 0 : unit === "mi" ? 0 : 1)
   : unit === "inHg" || unit === "in" || unit === "in/hr" ? 2
   : unit === "W/m²" ? 0

@@ -243,6 +243,11 @@ async fn records() -> Result<Vec<db::RecordCategory>, String> {
 }
 
 #[tauri::command]
+async fn extremes() -> Result<db::ExtremesReport, String> {
+    off_main(db::extremes).await
+}
+
+#[tauri::command]
 async fn synopsis(start: String, end: String) -> Result<db::Synopsis, String> {
     off_main(move || db::synopsis(&start, &end)).await
 }
@@ -544,7 +549,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             greet, db_status, query_series, series_window, range_stats, console_stats, wind_rose, series_hours,
-            records, day_compare, synopsis
+            records, day_compare, synopsis, extremes
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
