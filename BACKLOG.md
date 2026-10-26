@@ -22,7 +22,9 @@ while for context, then prune). Newest context at the bottom of each item.
     msdsd temp, ~10 F apart at times) and the Cumulus era (cumulus_log vs
     wu_ksandi354 pressure, 0.14 inHg apart) alternate in the canonical stream and
     draw sawtooths on charts. A priority decision, not QC — same root cause as the
-    "additive priority" note below.
+    "additive priority" note below. **Charts fixed 2026-10-26:** `series_window` now
+    applies priority per bucket (`BEST_IN_BUCKET`), so chart lines no longer
+    alternate sources. Rollups/Records still use per-timestamp priority.
   - [ ] **wu_ksandi354 humidity reads ~+6 vs MSDSD in 2016** and supplies a 76.1 F
     dew point (2016-06-22). Kept as labeled proxy for now; Michael to decide.
   - [ ] Charts still plot raw readings; decide whether day-bucket charts use QC.

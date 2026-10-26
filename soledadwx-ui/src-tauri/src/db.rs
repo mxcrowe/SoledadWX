@@ -909,6 +909,27 @@ pub fn series_hours(metric: &str, hours: i64) -> Result<Vec<SeriesPoint>, String
 ///
 /// `n` is carried per point so the UI can tell a real reading from a wide
 /// bucket that happens to average to the same value.
+/// One metric's readings in `[?2, ?4]`, bucketed by `?3` seconds, keeping in
+/// each bucket only the best-ranked source present there. Binds ?1 metric.
+///
+/// Source priority applied per BUCKET, not per timestamp. Sources run on
+/// different clocks, so per-timestamp priority (the canonical view) lets
+/// every source through and a chart line alternates between them: a sawtooth
+/// wherever two instruments disagree, and false rain when two daily totals
+/// interleave. Sources with no priority row (the inert WU import) never
+/// appear. At a 1-second bucket this is exactly the canonical stream.
+const BEST_IN_BUCKET: &str = "
+    r AS (SELECT (o.ts_utc / ?3) * ?3 AS b, o.ts_utc, o.value, p.rank
+          FROM observations o
+          JOIN sources s ON s.id = o.source_id
+          JOIN source_priority p ON p.source_kind = s.kind
+               AND o.ts_utc >= max(p.period_start, ?2)
+               AND o.ts_utc <  min(coalesce(p.period_end, ?4 + 1), ?4 + 1)
+          WHERE o.metric_id = (SELECT id FROM metrics WHERE name = ?1)
+            AND o.ts_utc >= ?2 AND o.ts_utc <= ?4),
+    best AS (SELECT b, MIN(rank) AS rk FROM r GROUP BY b),
+    kept AS (SELECT r.b, r.ts_utc, r.value FROM r JOIN best ON best.b = r.b AND r.rank = best.rk)";
+
 pub fn series_window(
     metric: &str,
     start_ts: i64,
@@ -925,14 +946,16 @@ pub fn series_window(
     let want = span / cap;
     let bucket = *STEPS.iter().find(|&&s| s >= want).unwrap_or(STEPS.last().unwrap());
 
+    if metric == "winddir" {
+        return wind_dir_window(&conn, metric, start_ts, end_ts, bucket);
+    }
+
     let mut stmt = conn
-        .prepare(
-            "SELECT (ts_utc / ?3) * ?3 AS b, AVG(value), MIN(value), MAX(value), COUNT(*)
-             FROM observations
-             WHERE metric_id = (SELECT id FROM metrics WHERE name = ?1)
-               AND ts_utc >= ?2 AND ts_utc <= ?4
-             GROUP BY b ORDER BY b",
-        )
+        .prepare(&format!(
+            "WITH {BEST_IN_BUCKET}
+             SELECT b, AVG(value), MIN(value), MAX(value), COUNT(*)
+             FROM kept GROUP BY b ORDER BY b"
+        ))
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map(rusqlite::params![metric, start_ts, bucket, end_ts], |r| {
@@ -944,6 +967,42 @@ pub fn series_window(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
     Ok(rows)
+}
+
+/// Wind direction bucketed as a circular mean. `AVG()` is wrong for angles:
+/// the mean of 350 and 10 degrees is north, not 180. Each bucket's direction
+/// is the bearing of the summed unit vectors; `min`/`max` carry the same
+/// value, because a range of bearings has no meaningful ends.
+fn wind_dir_window(conn: &Connection, metric: &str, start_ts: i64, end_ts: i64, bucket: i64) -> Result<Vec<SeriesPoint>, String> {
+    let mut stmt = conn
+        .prepare(&format!("WITH {BEST_IN_BUCKET} SELECT b, value FROM kept ORDER BY ts_utc"))
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(rusqlite::params![metric, start_ts, bucket, end_ts], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?))
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut out: Vec<SeriesPoint> = Vec::new();
+    let mut acc: Option<(i64, f64, f64, i64)> = None; // bucket, sum sin, sum cos, n
+    let finish = |(t, sx, cx, n): (i64, f64, f64, i64)| {
+        let deg = sx.atan2(cx).to_degrees().rem_euclid(360.0);
+        SeriesPoint { t, avg: deg, min: deg, max: deg, n }
+    };
+    for row in rows {
+        let (b, v) = row.map_err(|e| e.to_string())?;
+        let (s, c) = v.to_radians().sin_cos();
+        acc = match acc {
+            Some((t, sx, cx, n)) if t == b => Some((t, sx + s, cx + c, n + 1)),
+            Some(done) => {
+                out.push(finish(done));
+                Some((b, s, c, 1))
+            }
+            None => Some((b, s, c, 1)),
+        };
+    }
+    out.extend(acc.map(finish));
+    Ok(out)
 }
 
 /// Recompute `daily_rollups` for every day flagged in `rollup_dirty`.

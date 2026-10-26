@@ -20,17 +20,58 @@ import { displayUnit, unitFactor } from "./units";
 
 interface SeriesPoint { t: number; avg: number; min: number; max: number; n: number }
 
-// metric, label, stored unit, colour
-const TRACES: [string, string, string, string][] = [
-  ["tempf", "Temperature", "F", "#ff8b3d"],
-  ["dewpointf", "Dew point", "F", "#4dd0a1"],
-  ["humidity", "Humidity", "%", "#4da3ff"],
-  ["apparenttempf", "Apparent temp", "F", "#ff5f7e"],
-  ["solarradiation", "Solar", "W/m²", "#ffd24d"],
-  ["windspeedmph", "Wind", "mph", "#b388ff"],
-  ["windgustmph", "Gust", "mph", "#7a5cd6"],
-  ["baromrelin", "Pressure", "inHg", "#9aa7b4"],
+// How a trace turns buckets into values:
+//   avg   the bucket mean (most metrics)
+//   max   the bucket peak: gusts and rain rate are peaks, and a mean hides them
+//   total rain since the window began, built from the station's daily total,
+//         which resets at local midnight
+//   dir   a bearing: fixed 0-360 scale, dots not a line (a line would draw
+//         a false sweep every time the wind crosses north)
+type Mode = "avg" | "max" | "total" | "dir";
+
+interface Trace { metric: string; label: string; unit: string; colour: string; mode: Mode; digits: number }
+
+const TRACES: Trace[] = [
+  { metric: "tempf", label: "Temperature", unit: "F", colour: "#ff8b3d", mode: "avg", digits: 1 },
+  { metric: "dewpointf", label: "Dew point", unit: "F", colour: "#4dd0a1", mode: "avg", digits: 1 },
+  { metric: "humidity", label: "Humidity", unit: "%", colour: "#4da3ff", mode: "avg", digits: 0 },
+  { metric: "apparenttempf", label: "Apparent temp", unit: "F", colour: "#ff5f7e", mode: "avg", digits: 1 },
+  { metric: "tempinf", label: "Inside temp", unit: "F", colour: "#d9a066", mode: "avg", digits: 1 },
+  { metric: "humidityin", label: "Inside humidity", unit: "%", colour: "#8fb9d9", mode: "avg", digits: 0 },
+  { metric: "solarradiation", label: "Solar", unit: "W/m²", colour: "#ffd24d", mode: "avg", digits: 0 },
+  { metric: "windspeedmph", label: "Wind", unit: "mph", colour: "#b388ff", mode: "avg", digits: 1 },
+  { metric: "windgustmph", label: "Gust", unit: "mph", colour: "#7a5cd6", mode: "max", digits: 1 },
+  { metric: "winddir", label: "Wind direction", unit: "°", colour: "#e6c3ff", mode: "dir", digits: 0 },
+  { metric: "dailyrainin", label: "Rain total", unit: "in", colour: "#3d7cff", mode: "total", digits: 2 },
+  // The Ambient station reports its rain RATE in the field it calls hourlyrainin.
+  { metric: "hourlyrainin", label: "Rain rate", unit: "in/hr", colour: "#29c4e0", mode: "max", digits: 2 },
+  { metric: "baromrelin", label: "Pressure", unit: "inHg", colour: "#9aa7b4", mode: "avg", digits: 2 },
 ];
+
+const COMPASS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+const compass = (deg: number) => COMPASS[Math.round(deg / 22.5) % 16];
+
+/** Display values for one trace, one per bucket. */
+function traceValues(tr: Trace, s: SeriesPoint[]): number[] {
+  const uk = unitFactor(tr.unit);
+  switch (tr.mode) {
+    case "avg": return s.map(p => p.avg * uk);
+    case "max": return s.map(p => p.max * uk);
+    case "dir": return s.map(p => p.avg);
+    case "total": {
+      // Accumulate increases; a drop is the midnight reset, after which the
+      // new day's reading is all fresh rain.
+      let total = 0;
+      return s.map((p, i) => {
+        if (i > 0) {
+          const prev = s[i - 1].max;
+          total += p.max >= prev ? p.max - prev : p.max;
+        }
+        return total;
+      });
+    }
+  }
+}
 
 const RANGES: [string, number][] = [
   ["1 h", 1], ["3 h", 3], ["6 h", 6], ["12 h", 12],
@@ -131,7 +172,7 @@ export default function Charts() {
           ))}
         </div>
         <div className="ch-legend">
-          {TRACES.map(([m, label, , colour]) => (
+          {TRACES.map(({ metric: m, label, colour }) => (
             <button
               key={m}
               className={`ch-chip ${active.includes(m) ? "on" : ""}`}
@@ -168,16 +209,23 @@ export default function Charts() {
 
           {active.map(m => {
             const s = data[m];
-            const def = TRACES.find(tr => tr[0] === m);
+            const def = TRACES.find(tr => tr.metric === m);
             if (!s || s.length === 0 || !def) return null;
-            const uk = unitFactor(def[2]);
-            const vals = s.map(p => p.avg * uk);
-            const lo = Math.min(...vals), hi = Math.max(...vals);
+            const vals = traceValues(def, s);
+            // Bearings keep a fixed compass scale; everything else is scaled
+            // to its own range.
+            const [lo, hi] = def.mode === "dir" ? [0, 360] : [Math.min(...vals), Math.max(...vals)];
             const span = hi - lo || 1;
             // Each trace gets 88% of the box, inset, so a flat trace does not
             // sit welded to the frame edge.
             const y = (v: number) =>
               PT + (1 - (v - lo) / span) * (H - PT - PB) * 0.88 + (H - PT - PB) * 0.06;
+            if (def.mode === "dir")
+              return (
+                <g key={m} fill={def.colour}>
+                  {s.map((p, i) => <circle key={p.t} cx={x(p.t)} cy={y(vals[i])} r={1.6} />)}
+                </g>
+              );
             const line = s
               .map((p, i) => `${x(p.t).toFixed(1)},${y(vals[i]).toFixed(1)}`)
               .join(" ");
@@ -186,7 +234,7 @@ export default function Charts() {
                 key={m}
                 points={line}
                 fill="none"
-                stroke={def[3]}
+                stroke={def.colour}
                 strokeWidth={1.8}
                 strokeLinejoin="round"
               />
@@ -202,11 +250,10 @@ export default function Charts() {
       <div className="ch-readout">
         {active.map(m => {
           const s = data[m];
-          const def = TRACES.find(tr => tr[0] === m);
+          const def = TRACES.find(tr => tr.metric === m);
           if (!s || s.length === 0 || !def) return null;
-          const uk = unitFactor(def[2]);
-          const unit = displayUnit(def[2]);
-          const vals = s.map(p => p.avg * uk);
+          const unit = displayUnit(def.unit);
+          const vals = traceValues(def, s);
           let cur = vals[vals.length - 1];
           if (hoverT != null) {
             let best = 0, bd = Infinity;
@@ -217,11 +264,15 @@ export default function Charts() {
             cur = vals[best];
           }
           return (
-            <div key={m} className="ch-stat" style={{ borderLeftColor: def[3] }}>
-              <span className="ch-stat-label">{def[1]}</span>
-              <span className="ch-stat-val">{cur.toFixed(1)}<em>{unit}</em></span>
+            <div key={m} className="ch-stat" style={{ borderLeftColor: def.colour }}>
+              <span className="ch-stat-label">{def.label}</span>
+              <span className="ch-stat-val">
+                {def.mode === "dir" ? `${compass(cur)} ` : ""}{cur.toFixed(def.digits)}<em>{unit}</em>
+              </span>
               <span className="ch-stat-range">
-                {Math.min(...vals).toFixed(1)} – {Math.max(...vals).toFixed(1)}
+                {def.mode === "dir" ? "bearing"
+                  : def.mode === "total" ? "since window start"
+                  : `${Math.min(...vals).toFixed(def.digits)} – ${Math.max(...vals).toFixed(def.digits)}`}
               </span>
             </div>
           );
