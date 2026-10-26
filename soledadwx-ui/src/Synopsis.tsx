@@ -41,8 +41,12 @@ const MONTHS = ["January", "February", "March", "April", "May", "June", "July",
   "August", "September", "October", "November", "December"];
 
 /** The hygrometer saturated (railed at 99/10) until it was replaced. */
-const BAD_HUMIDITY_FROM = "2011-01-01";
-const BAD_HUMIDITY_TO = "2016-12-01";
+// Railed hygrometers, measured 2026-10-26 (scripts/wxdb.py QUALITY_PERIODS).
+// Extremes inside these are already set aside; the warning covers the means.
+const BAD_HUMIDITY: [string, string][] = [
+  ["2010-07-01", "2016-12-01"],
+  ["2017-08-01", "2018-09-01"],
+];
 
 const SOURCE_LABELS: Record<string, string> = {
   cumulus_log: "Cumulus log",
@@ -203,7 +207,7 @@ function Card({ data: d, busy, whenTs, whenDay }: {
   whenTs: (e: Extreme) => string; whenDay: (d: DayValue | null) => string;
 }) {
   const t = d.temp, r = d.rain, p = d.pressure, w = d.wind, h = d.humidity, s = d.solar;
-  const badHumidity = d.start < BAD_HUMIDITY_TO && d.end > BAD_HUMIDITY_FROM;
+  const badHumidity = BAD_HUMIDITY.some(([from, to]) => d.start < to && d.end > from);
   const proxies = d.sources.filter((x) => x.proxy);
   const total = d.sources.reduce((n, x) => n + x.readings, 0);
 
@@ -280,7 +284,9 @@ function Card({ data: d, busy, whenTs, whenDay }: {
         )}
         {badHumidity && (
           <div className="syn-warn">
-            Humidity from 2011 to November 2016 is unreliable: the old hygrometer saturated at its limits.
+            Humidity from July 2010 to November 2016, and from August 2017 to August 2018, is unreliable:
+            the hygrometer was stuck at its limits. Humidity and dew point extremes from those months are
+            left out; the means shown here include them.
           </div>
         )}
         {s.mean_daily_kwh != null && (

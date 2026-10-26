@@ -70,6 +70,17 @@ CREATE TABLE IF NOT EXISTS backfill_attempts (
     attempts     INTEGER NOT NULL,
     rows_gained  INTEGER NOT NULL       -- from the most recent attempt
 ) WITHOUT ROWID;
+
+-- Periods when a source's sensor is unusable for a metric. Rows are seeded by
+-- scripts/wxdb.py (QUALITY_PERIODS); the rollup QC skips readings inside them.
+CREATE TABLE IF NOT EXISTS quality_periods (
+    metric       TEXT NOT NULL,
+    source_kind  TEXT NOT NULL,
+    period_start INTEGER NOT NULL,
+    period_end   INTEGER NOT NULL,
+    reason       TEXT NOT NULL,
+    PRIMARY KEY (metric, source_kind, period_start)
+) WITHOUT ROWID;
 ";
 
 pub fn db_path() -> PathBuf {
@@ -954,13 +965,40 @@ pub fn series_window(
 /// identical result (verified against the Python builder on ten days,
 /// including a DST transition).
 ///
-/// Semantics deliberately mirror `build_rollups.py` exactly, including
-/// `ts_min`/`ts_max` being the EARLIEST timestamp at which the extreme
-/// occurred. If you change one, change both.
+/// `ts_min`/`ts_max` are the EARLIEST timestamp at which the extreme occurred.
+///
+/// QUALITY CONTROL (2026-10-26). `min_value`/`max_value` stay raw. Alongside
+/// them, `qc_min`/`qc_max` are the extremes after setting aside readings that
+/// fail a test below, and that HELD for two consecutive readings of the same
+/// source where that source logs densely (`HELD_PAIR_SECS`). `MAX()` is a selection operator that seeks out artifacts, so the
+/// raw extremes are systematically biased toward error; the QC'd pair is
+/// what Records and Synopsis headline. Readings are never deleted.
+///
+/// A reading is set aside when it is
+/// - outside the metric's physical limits (`QC_LIMITS`),
+/// - a one-reading spike: further than `spike` from BOTH neighbours of the
+///   same source, in the same direction (real weather persists), or
+/// - inside a `quality_periods` window for its source (the railed Zephyr
+///   hygrometer and everything computed from it).
+///
+/// Holding is only asked of dense logs. Two readings a minute apart say "it
+/// lasted"; two readings 20 minutes apart (Cumulus, 2010) say "it lasted half
+/// an hour", which would push every old record about 1 F below a modern one.
+/// So a reading with no neighbour within `HELD_PAIR_SECS` stands on its own,
+/// as long as it passed the spike test.
+///
+/// Neighbours are taken within one source, never across the canonical mix:
+/// where two sources interleave (2018-2020) they disagree by design and would
+/// otherwise flag each other.
+///
+/// This is the ONLY implementation; `build_rollups.py` just marks every day
+/// dirty and lets this recompute. Survey and thresholds:
+/// Dashboard/QC_SURVEY_2026-10-26.md.
 pub fn refresh_dirty_rollups() -> Result<(usize, usize), String> {
     let conn = Connection::open(db_path()).map_err(|e| e.to_string())?;
     conn.busy_timeout(std::time::Duration::from_secs(10))
         .map_err(|e| e.to_string())?;
+    ensure_qc_columns(&conn)?;
 
     let days: Vec<String> = {
         let mut stmt = conn
@@ -976,6 +1014,7 @@ pub fn refresh_dirty_rollups() -> Result<(usize, usize), String> {
         return Ok((0, 0));
     }
 
+    let sql = rollup_sql();
     let mut total_rows = 0usize;
     for day in &days {
         // Local midnight -> UTC epoch, for this day and the next. Deriving BOTH
@@ -993,33 +1032,7 @@ pub fn refresh_dirty_rollups() -> Result<(usize, usize), String> {
         tx.execute("DELETE FROM daily_rollups WHERE day_local = ?1", [day])
             .map_err(|e| e.to_string())?;
         let n = tx
-            .execute(
-                "WITH canon AS (
-                     SELECT o.metric_id, o.ts_utc, o.value,
-                            ROW_NUMBER() OVER (
-                                PARTITION BY o.metric_id, o.ts_utc ORDER BY p.rank
-                            ) rn
-                     FROM observations o
-                     JOIN sources s ON s.id = o.source_id
-                     JOIN source_priority p ON p.source_kind = s.kind
-                          AND o.ts_utc >= max(p.period_start, ?1)
-                          AND o.ts_utc <  min(coalesce(p.period_end, ?2), ?2)
-                 ),
-                 d AS (SELECT metric_id, ts_utc, value FROM canon WHERE rn = 1),
-                 agg AS (SELECT metric_id, AVG(value) av, MIN(value) mn,
-                                MAX(value) mx, COUNT(*) n
-                         FROM d GROUP BY metric_id)
-                 INSERT INTO daily_rollups
-                     (metric_id, day_local, avg_value, min_value, max_value,
-                      n_samples, ts_min, ts_max)
-                 SELECT a.metric_id, ?3, a.av, a.mn, a.mx, a.n,
-                        (SELECT MIN(ts_utc) FROM d
-                          WHERE d.metric_id = a.metric_id AND d.value = a.mn),
-                        (SELECT MIN(ts_utc) FROM d
-                          WHERE d.metric_id = a.metric_id AND d.value = a.mx)
-                 FROM agg a",
-                rusqlite::params![a, b, day],
-            )
+            .execute(&sql, rusqlite::params![a, b, day, NEIGHBOR_GAP_SECS, HELD_PAIR_SECS])
             .map_err(|e| e.to_string())?;
         // Clear the flag inside the SAME transaction as the recompute, so a
         // crash mid-refresh leaves the day dirty and it is simply redone.
@@ -1031,6 +1044,158 @@ pub fn refresh_dirty_rollups() -> Result<(usize, usize), String> {
     Ok((days.len(), total_rows))
 }
 
+/// Two readings further apart than this are not neighbours for the spike
+/// test. Cumulus logged every 20 minutes in 2010; anything tighter silently
+/// exempts that era.
+const NEIGHBOR_GAP_SECS: i64 = 1500;
+
+/// An extreme must be matched by the next reading when that reading is at
+/// most this far away. Sparser logs are not asked to hold (see above).
+const HELD_PAIR_SECS: i64 = 300;
+
+/// (metric, lowest possible, highest possible, spike threshold) for this
+/// hilltop. Gust, rain rate and solar are spiky by nature, so they get limits
+/// only. Thresholds come from the 2026-10-26 survey.
+const QC_LIMITS: &[(&str, f64, f64, Option<f64>)] = &[
+    ("tempf", 20.0, 120.0, Some(5.0)),
+    ("baromrelin", 28.5, 31.0, Some(0.04)),
+    ("baromabsin", 27.5, 31.0, Some(0.04)),
+    ("humidity", 0.0, 100.0, None),
+    ("dewpointf", -30.0, 85.0, None),
+    ("windspeedmph", 0.0, 150.0, None),
+    ("windgustmph", 0.0, 150.0, None),
+    ("rainratein", 0.0, 20.0, None),
+    ("dailyrainin", 0.0, 15.0, Some(0.10)),
+    ("solarradiation", 0.0, 1500.0, None),
+    ("uv", 0.0, 20.0, None),
+];
+
+/// Columns added to `daily_rollups` after it first shipped. Mirrors
+/// `QC_COLUMNS` in build_rollups.py.
+const QC_COLUMNS: &[(&str, &str)] = &[
+    ("qc_min", "REAL"),
+    ("qc_max", "REAL"),
+    ("qc_ts_min", "INTEGER"),
+    ("qc_ts_max", "INTEGER"),
+    ("n_rejected", "INTEGER NOT NULL DEFAULT 0"),
+];
+
+fn ensure_qc_columns(conn: &Connection) -> Result<(), String> {
+    let have: Vec<String> = {
+        let mut stmt = conn
+            .prepare("SELECT name FROM pragma_table_info('daily_rollups')")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| r.get(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        rows
+    };
+    for (name, decl) in QC_COLUMNS {
+        if !have.iter().any(|h| h == name) {
+            conn.execute_batch(&format!("ALTER TABLE daily_rollups ADD COLUMN {name} {decl}"))
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+/// One day's rollup. ?1/?2 = the day's UTC bounds, ?3 = the day,
+/// ?4 = `NEIGHBOR_GAP_SECS`, ?5 = `HELD_PAIR_SECS`.
+fn rollup_sql() -> String {
+    let limits = QC_LIMITS
+        .iter()
+        .map(|(m, lo, hi, spike)| {
+            let spike = spike.map_or("NULL".to_string(), |s| s.to_string());
+            format!("('{m}', {lo:?}, {hi:?}, {spike})")
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "WITH canon AS (
+             SELECT o.metric_id, o.ts_utc, o.source_id, s.kind, o.value,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY o.metric_id, o.ts_utc ORDER BY p.rank
+                    ) rn
+             FROM observations o
+             JOIN sources s ON s.id = o.source_id
+             JOIN source_priority p ON p.source_kind = s.kind
+                  AND o.ts_utc >= max(p.period_start, ?1)
+                  AND o.ts_utc <  min(coalesce(p.period_end, ?2), ?2)
+         ),
+         d AS MATERIALIZED (
+             SELECT metric_id, ts_utc, source_id, kind, value FROM canon WHERE rn = 1
+         ),
+         agg AS (SELECT metric_id, AVG(value) av, MIN(value) mn,
+                        MAX(value) mx, COUNT(*) n
+                 FROM d GROUP BY metric_id),
+         lim(name, lo, hi, spike) AS (VALUES {limits}),
+         nb AS (
+             SELECT d.*,
+                    LAG(value) OVER w pv, LAG(ts_utc) OVER w pt,
+                    LEAD(value) OVER w nv, LEAD(ts_utc) OVER w nt
+             FROM d WINDOW w AS (PARTITION BY metric_id, source_id ORDER BY ts_utc)
+         ),
+         q AS MATERIALIZED (
+             SELECT nb.metric_id, nb.source_id, nb.ts_utc, nb.value,
+                    CASE
+                      WHEN nb.value < l.lo OR nb.value > l.hi THEN 1
+                      WHEN l.spike IS NOT NULL
+                           AND nb.ts_utc - nb.pt <= ?4 AND nb.nt - nb.ts_utc <= ?4
+                           AND ((nb.value - nb.pv > l.spike AND nb.value - nb.nv > l.spike)
+                             OR (nb.pv - nb.value > l.spike AND nb.nv - nb.value > l.spike)) THEN 1
+                      WHEN EXISTS (SELECT 1 FROM quality_periods qp
+                                   WHERE qp.metric = m.name AND qp.source_kind = nb.kind
+                                     AND nb.ts_utc >= qp.period_start
+                                     AND nb.ts_utc <  qp.period_end) THEN 1
+                      ELSE 0
+                    END AS bad
+             FROM nb
+             JOIN metrics m ON m.id = nb.metric_id
+             LEFT JOIN lim l ON l.name = m.name
+         ),
+         pairs AS (
+             SELECT metric_id, ts_utc, value,
+                    LEAD(value) OVER w AS nv,
+                    LEAD(ts_utc) OVER w - ts_utc AS gap,
+                    ts_utc - LAG(ts_utc) OVER w AS pgap
+             FROM q WHERE bad = 0
+             WINDOW w AS (PARTITION BY metric_id, source_id ORDER BY ts_utc)
+         ),
+         -- Dense: pair with the next reading. The tail of a dense run is
+         -- already inside the previous pair (NULL). Sparse: stands alone.
+         h AS MATERIALIZED (
+             SELECT metric_id, ts_utc,
+                    CASE WHEN gap <= ?5 THEN min(value, nv)
+                         WHEN pgap <= ?5 THEN NULL ELSE value END AS hold_hi,
+                    CASE WHEN gap <= ?5 THEN max(value, nv)
+                         WHEN pgap <= ?5 THEN NULL ELSE value END AS hold_lo
+             FROM pairs
+         ),
+         qa AS (SELECT metric_id, MIN(hold_lo) qmn, MAX(hold_hi) qmx
+                FROM h GROUP BY metric_id),
+         rej AS (SELECT metric_id, SUM(bad) nrej FROM q GROUP BY metric_id)
+         INSERT INTO daily_rollups
+             (metric_id, day_local, avg_value, min_value, max_value, n_samples,
+              ts_min, ts_max, qc_min, qc_max, qc_ts_min, qc_ts_max, n_rejected)
+         SELECT a.metric_id, ?3, a.av, a.mn, a.mx, a.n,
+                (SELECT MIN(ts_utc) FROM d
+                  WHERE d.metric_id = a.metric_id AND d.value = a.mn),
+                (SELECT MIN(ts_utc) FROM d
+                  WHERE d.metric_id = a.metric_id AND d.value = a.mx),
+                qa.qmn, qa.qmx,
+                (SELECT MIN(ts_utc) FROM h
+                  WHERE h.metric_id = a.metric_id AND h.hold_lo = qa.qmn),
+                (SELECT MIN(ts_utc) FROM h
+                  WHERE h.metric_id = a.metric_id AND h.hold_hi = qa.qmx),
+                coalesce(rej.nrej, 0)
+         FROM agg a
+         LEFT JOIN qa ON qa.metric_id = a.metric_id
+         LEFT JOIN rej ON rej.metric_id = a.metric_id"
+    )
+}
+
 // ---------- Min/Max Records (all-time hall of fame) ----------
 
 #[derive(serde::Serialize)]
@@ -1040,6 +1205,11 @@ pub struct RecordRow {
     pub unit: String,
     pub when_ts: Option<i64>,     // epoch for instantaneous records
     pub when_day: Option<String>, // ISO date for daily-derived records
+    /// The raw single-reading record, present only when it differs from the
+    /// QC'd headline (see `refresh_dirty_rollups`). Shown, never hidden.
+    pub raw_value: Option<f64>,
+    pub raw_when_ts: Option<i64>,
+    pub raw_when_day: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -1048,18 +1218,28 @@ pub struct RecordCategory {
     pub rows: Vec<RecordRow>,
 }
 
+/// Which rollup columns a record is read from.
+#[derive(Clone, Copy)]
+enum Basis {
+    /// QC'd and held two readings: the headline.
+    Qc,
+    /// Every reading, artifacts included.
+    Raw,
+}
+
 // Instantaneous all-time extreme from daily_rollups (value + the epoch it occurred).
-fn inst_ext(conn: &Connection, metric: &str, want_max: bool) -> Option<(f64, i64)> {
-    let (vcol, tscol, ord) = if want_max {
-        ("max_value", "ts_max", "DESC")
-    } else {
-        ("min_value", "ts_min", "ASC")
+fn inst_ext(conn: &Connection, metric: &str, want_max: bool, basis: Basis) -> Option<(f64, i64)> {
+    let (vcol, tscol, ord) = match (want_max, basis) {
+        (true, Basis::Qc) => ("qc_max", "qc_ts_max", "DESC"),
+        (false, Basis::Qc) => ("qc_min", "qc_ts_min", "ASC"),
+        (true, Basis::Raw) => ("max_value", "ts_max", "DESC"),
+        (false, Basis::Raw) => ("min_value", "ts_min", "ASC"),
     };
     conn.query_row(
         &format!(
             "SELECT r.{vcol}, r.{tscol} FROM daily_rollups r
              JOIN metrics m ON m.id = r.metric_id
-             WHERE m.name = ?1 ORDER BY r.{vcol} {ord} LIMIT 1"
+             WHERE m.name = ?1 AND r.{vcol} IS NOT NULL ORDER BY r.{vcol} {ord} LIMIT 1"
         ),
         [metric],
         |r| Ok((r.get(0)?, r.get(1)?)),
@@ -1068,13 +1248,19 @@ fn inst_ext(conn: &Connection, metric: &str, want_max: bool) -> Option<(f64, i64
 }
 
 // Daily-derived extreme (e.g. highest daily minimum): value + the day it happened.
-fn day_ext(conn: &Connection, metric: &str, expr: &str, want_max: bool) -> Option<(f64, String)> {
+// `expr` is written against the QC columns (r.qc_min / r.qc_max); the raw
+// version substitutes the raw ones.
+fn day_ext(conn: &Connection, metric: &str, expr: &str, want_max: bool, basis: Basis) -> Option<(f64, String)> {
     let ord = if want_max { "DESC" } else { "ASC" };
+    let expr = match basis {
+        Basis::Qc => expr.to_string(),
+        Basis::Raw => expr.replace("r.qc_min", "r.min_value").replace("r.qc_max", "r.max_value"),
+    };
     conn.query_row(
         &format!(
             "SELECT {expr} AS v, r.day_local FROM daily_rollups r
              JOIN metrics m ON m.id = r.metric_id
-             WHERE m.name = ?1 ORDER BY v {ord} LIMIT 1"
+             WHERE m.name = ?1 AND v IS NOT NULL ORDER BY v {ord} LIMIT 1"
         ),
         [metric],
         |r| Ok((r.get(0)?, r.get(1)?)),
@@ -1082,15 +1268,27 @@ fn day_ext(conn: &Connection, metric: &str, expr: &str, want_max: bool) -> Optio
     .ok()
 }
 
+/// The raw record, kept only when it says something the headline doesn't.
+fn differs<T>(headline: f64, raw: Option<(f64, T)>) -> Option<(f64, T)> {
+    raw.filter(|(v, _)| (v - headline).abs() > 1e-9)
+}
+
 fn inst_row(conn: &Connection, label: &str, metric: &str, unit: &str, max: bool) -> Option<RecordRow> {
-    inst_ext(conn, metric, max).map(|(v, ts)| RecordRow {
+    let (v, ts) = inst_ext(conn, metric, max, Basis::Qc)?;
+    let raw = differs(v, inst_ext(conn, metric, max, Basis::Raw));
+    Some(RecordRow {
         label: label.into(), value: v, unit: unit.into(), when_ts: Some(ts), when_day: None,
+        raw_value: raw.map(|r| r.0), raw_when_ts: raw.map(|r| r.1), raw_when_day: None,
     })
 }
 
 fn day_row(conn: &Connection, label: &str, metric: &str, expr: &str, unit: &str, max: bool) -> Option<RecordRow> {
-    day_ext(conn, metric, expr, max).map(|(v, d)| RecordRow {
+    let (v, d) = day_ext(conn, metric, expr, max, Basis::Qc)?;
+    let raw = differs(v, day_ext(conn, metric, expr, max, Basis::Raw));
+    let (raw_value, raw_when_day) = raw.map_or((None, None), |(rv, rd)| (Some(rv), Some(rd)));
+    Some(RecordRow {
         label: label.into(), value: v, unit: unit.into(), when_ts: None, when_day: Some(d),
+        raw_value, raw_when_ts: None, raw_when_day,
     })
 }
 
@@ -1105,12 +1303,12 @@ pub fn records() -> Result<Vec<RecordCategory>, rusqlite::Error> {
         inst_row(&conn, "Lowest wind chill", "windchillf", "°F", false),
         inst_row(&conn, "Highest feels-like", "feelslikef", "°F", true),
         inst_row(&conn, "Lowest feels-like", "feelslikef", "°F", false),
-        day_row(&conn, "Highest daily minimum", "tempf", "r.min_value", "°F", true),
-        day_row(&conn, "Lowest daily maximum", "tempf", "r.max_value", "°F", false),
+        day_row(&conn, "Highest daily minimum", "tempf", "r.qc_min", "°F", true),
+        day_row(&conn, "Lowest daily maximum", "tempf", "r.qc_max", "°F", false),
         inst_row(&conn, "Highest dew point", "dewpointf", "°F", true),
         inst_row(&conn, "Lowest dew point", "dewpointf", "°F", false),
-        day_row(&conn, "Highest daily temp range", "tempf", "(r.max_value - r.min_value)", "°F", true),
-        day_row(&conn, "Lowest daily temp range", "tempf", "(r.max_value - r.min_value)", "°F", false),
+        day_row(&conn, "Highest daily temp range", "tempf", "(r.qc_max - r.qc_min)", "°F", true),
+        day_row(&conn, "Lowest daily temp range", "tempf", "(r.qc_max - r.qc_min)", "°F", false),
     ];
     cats.push(RecordCategory { name: "Temperature".into(), rows: temperature.into_iter().flatten().collect() });
 
@@ -1123,15 +1321,18 @@ pub fn records() -> Result<Vec<RecordCategory>, rusqlite::Error> {
          WHERE wind_run_mi IS NOT NULL ORDER BY wind_run_mi DESC LIMIT 1",
         [], |r| Ok((r.get::<_, f64>(0)?, r.get::<_, String>(1)?)),
     ).ok() {
-        wind.push(RecordRow { label: "Highest daily wind run".into(), value: v, unit: "mi".into(), when_ts: None, when_day: Some(d) });
+        wind.push(RecordRow {
+            label: "Highest daily wind run".into(), value: v, unit: "mi".into(), when_ts: None, when_day: Some(d),
+            raw_value: None, raw_when_ts: None, raw_when_day: None,
+        });
     }
     cats.push(RecordCategory { name: "Wind".into(), rows: wind });
 
     let rain = [
-        day_row(&conn, "Wettest day", "dailyrainin", "r.max_value", "in", true),
+        day_row(&conn, "Wettest day", "dailyrainin", "r.qc_max", "in", true),
         inst_row(&conn, "Highest rain rate", "rainratein", "in/hr", true),
-        day_row(&conn, "Wettest month", "monthlyrainin", "r.max_value", "in", true),
-        day_row(&conn, "Wettest year", "yearlyrainin", "r.max_value", "in", true),
+        day_row(&conn, "Wettest month", "monthlyrainin", "r.qc_max", "in", true),
+        day_row(&conn, "Wettest year", "yearlyrainin", "r.qc_max", "in", true),
     ];
     cats.push(RecordCategory { name: "Rainfall".into(), rows: rain.into_iter().flatten().collect() });
 
@@ -1618,6 +1819,9 @@ impl Pick {
     }
 }
 
+/// A day's QC'd extreme (see `refresh_dirty_rollups`). Extremes are where
+/// artifacts live, so they come from the QC columns; means and totals stay
+/// raw, because averaging already dilutes a stray reading.
 #[derive(Clone, Copy)]
 enum Col {
     Min,
@@ -1627,14 +1831,14 @@ enum Col {
 impl Col {
     fn value(self) -> &'static str {
         match self {
-            Col::Min => "r.min_value",
-            Col::Max => "r.max_value",
+            Col::Min => "r.qc_min",
+            Col::Max => "r.qc_max",
         }
     }
     fn ts(self) -> &'static str {
         match self {
-            Col::Min => "r.ts_min",
-            Col::Max => "r.ts_max",
+            Col::Min => "r.qc_ts_min",
+            Col::Max => "r.qc_ts_max",
         }
     }
 }

@@ -317,6 +317,8 @@ p {
 .rec-value { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; font-size: 1.1rem; }
 .rec-unit { font-size: 0.8rem; opacity: 0.6; font-weight: 400; }
 .rec-when { text-align: right; color: #9fb4e8; font-size: 0.9rem; white-space: nowrap; }
+.rec-raw { font-size: 0.75rem; font-weight: 400; opacity: 0.55; margin-top: 0.15rem; }
+.rec-note { color: #888; font-size: 0.85rem; max-width: 46rem; margin: -0.6rem 0 1.2rem; }
 
 /* ---------- Today / Yesterday page ---------- */
 .dayyest { max-width: 860px; margin: 0 auto; }

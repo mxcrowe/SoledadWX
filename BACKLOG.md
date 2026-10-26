@@ -11,6 +11,23 @@ while for context, then prune). Newest context at the bottom of each item.
 
 ## Data integrity
 
+- [x] **Quality control for extremes (built 2026-10-26).** `daily_rollups` keeps raw
+  `min_value`/`max_value` and adds `qc_min`/`qc_max` (+ `qc_ts_*`, `n_rejected`):
+  physical limits, a within-source one-reading spike test, `quality_periods`
+  windows, and "held two consecutive readings". Records headlines QC with raw
+  beneath; Synopsis extremes use QC, means/totals stay raw. One implementation:
+  `db::refresh_dirty_rollups`; `build_rollups.py` now only migrates + marks dirty.
+  Survey: `Dashboard/QC_SURVEY_2026-10-26.md`. Follow-ups:
+  - [ ] **Interleaved sources are the real "spikes".** 2018-09..2020-04 (wu_pws vs
+    msdsd temp, ~10 F apart at times) and the Cumulus era (cumulus_log vs
+    wu_ksandi354 pressure, 0.14 inHg apart) alternate in the canonical stream and
+    draw sawtooths on charts. A priority decision, not QC — same root cause as the
+    "additive priority" note below.
+  - [ ] **wu_ksandi354 humidity reads ~+6 vs MSDSD in 2016** and supplies a 76.1 F
+    dew point (2016-06-22). Kept as labeled proxy for now; Michael to decide.
+  - [ ] Charts still plot raw readings; decide whether day-bucket charts use QC.
+  - [ ] Soledad Extremes page (#11) builds on the QC columns.
+
 - [ ] **21 months of WU sit inert, awaiting a priority decision (Sep 22 2026).**
   `import_wu.py` ingested 2025-01-01..2026-09-21 (629 days, 2,099,316 rows).
   The band 2025-01-01..2025-08-16 landed inside the existing

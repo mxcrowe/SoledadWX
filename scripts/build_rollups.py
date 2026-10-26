@@ -20,8 +20,15 @@ Caveat: DST transition days are 23 h and 25 h long. Harmless for max/min/avg
 (solar energy, wind run) on those two dates a year are not comparable to
 their neighbours. Those are computed live in Rust, not from this table.
 
-Rebuild is full (DELETE + INSERT) — takes ~seconds-to-a-minute and runs after
-any import. Re-run me whenever sources change.
+QUALITY CONTROL (2026-10-26). Each row also carries qc_min/qc_max: the day's
+extremes after setting aside readings that fail a physical limit, a
+one-reading spike test, or a quality_periods window (e.g. the railed Zephyr
+hygrometer), AND that held for at least two consecutive readings. Records
+and Synopsis headline those; min/max stay raw so nothing is hidden. That
+logic lives in ONE place, the Monitor's refresh_dirty_rollups() in db.rs, so
+this script no longer computes rollups itself: it migrates the table, seeds
+quality_periods, and marks every day dirty. The running Monitor recomputes
+them within a few minutes (watch its tray tooltip / log).
 
 Usage:
     python scripts/build_rollups.py
@@ -45,14 +52,26 @@ CREATE TABLE IF NOT EXISTS daily_rollups (
     metric_id INTEGER NOT NULL REFERENCES metrics(id),
     day_local TEXT NOT NULL,          -- ISO date, station civil local time
     avg_value REAL NOT NULL,
-    min_value REAL NOT NULL,
+    min_value REAL NOT NULL,          -- raw: every canonical reading
     max_value REAL NOT NULL,
     n_samples INTEGER NOT NULL,
     ts_min    INTEGER NOT NULL,       -- epoch of the minimum reading
     ts_max    INTEGER NOT NULL,       -- epoch of the maximum reading
+    qc_min    REAL,                   -- QC'd and held two readings; NULL = none usable
+    qc_max    REAL,
+    qc_ts_min INTEGER,
+    qc_ts_max INTEGER,
+    n_rejected INTEGER NOT NULL DEFAULT 0,  -- readings the QC set aside
     PRIMARY KEY (metric_id, day_local)
 ) WITHOUT ROWID;
 """
+
+# Columns added after the table first shipped: (name, declaration).
+QC_COLUMNS = [
+    ("qc_min", "REAL"), ("qc_max", "REAL"),
+    ("qc_ts_min", "INTEGER"), ("qc_ts_max", "INTEGER"),
+    ("n_rejected", "INTEGER NOT NULL DEFAULT 0"),
+]
 
 
 def check_timezone(conn) -> None:
@@ -102,47 +121,24 @@ def main() -> int:
         conn.execute("DROP TABLE daily_rollups")
     conn.executescript(DDL)
 
+    have = {r[1] for r in conn.execute("PRAGMA table_info(daily_rollups)")}
+    for name, decl in QC_COLUMNS:
+        if name not in have:
+            print(f"adding daily_rollups.{name}")
+            conn.execute(f"ALTER TABLE daily_rollups ADD COLUMN {name} {decl}")
+
     t0 = time.time()
-    conn.execute("DELETE FROM daily_rollups")
-    # Materialize the canonical view once — correlated lookups against the
-    # view itself would re-resolve source priorities per row.
-    conn.execute(
-        "CREATE TEMP TABLE snap AS "
-        "SELECT metric_id, ts_utc, date(ts_utc,'unixepoch','localtime') AS day_local, value "
-        "FROM canonical_observations"
-    )
-    conn.execute("CREATE INDEX snap_idx ON snap(metric_id, day_local, value)")
-    conn.execute(
-        """
-        INSERT INTO daily_rollups
-        SELECT s.metric_id, s.day_local,
-               AVG(s.value), MIN(s.value), MAX(s.value), COUNT(*),
-               0, 0
-        FROM snap s
-        GROUP BY s.metric_id, s.day_local
-        """
-    )
-    conn.execute(
-        """
-        UPDATE daily_rollups AS r SET
-          ts_min = (SELECT MIN(s.ts_utc) FROM snap s
-                    WHERE s.metric_id=r.metric_id AND s.day_local=r.day_local
-                      AND s.value=r.min_value),
-          ts_max = (SELECT MIN(s.ts_utc) FROM snap s
-                    WHERE s.metric_id=r.metric_id AND s.day_local=r.day_local
-                      AND s.value=r.max_value)
-        """
-    )
-    # A full rebuild supersedes every pending incremental one. The app's
-    # triggers keep `rollup_dirty` flagged as rows arrive (db.rs); leaving
-    # stale flags here would make the app redo work this script just did.
     conn.execute(
         "CREATE TABLE IF NOT EXISTS rollup_dirty (day_local TEXT PRIMARY KEY) WITHOUT ROWID"
     )
-    conn.execute("DELETE FROM rollup_dirty")
+    conn.execute(
+        "INSERT OR IGNORE INTO rollup_dirty(day_local) "
+        "SELECT DISTINCT date(ts_utc, 'unixepoch', 'localtime') FROM observations"
+    )
     conn.commit()
-    n = conn.execute("SELECT COUNT(*) FROM daily_rollups").fetchone()[0]
-    print(f"daily_rollups: {n:,} rows in {time.time() - t0:.1f}s")
+    n = conn.execute("SELECT COUNT(*) FROM rollup_dirty").fetchone()[0]
+    print(f"marked {n:,} days dirty in {time.time() - t0:.1f}s; "
+          "the running Monitor will recompute them (needs the 2026-10-26+ build)")
     conn.close()
     return 0
 

@@ -89,6 +89,18 @@ CREATE TABLE IF NOT EXISTS source_priority (
     PRIMARY KEY (period_start, source_kind)
 );
 
+-- Periods when a source's sensor is known to be unusable for a metric
+-- (what we DISBELIEVE). Readings are kept untouched; extremes skip them.
+-- Data, not code, like source_priority. Seeded from QUALITY_PERIODS below.
+CREATE TABLE IF NOT EXISTS quality_periods (
+    metric       TEXT NOT NULL,         -- metrics.name
+    source_kind  TEXT NOT NULL,
+    period_start INTEGER NOT NULL,      -- epoch seconds UTC, inclusive
+    period_end   INTEGER NOT NULL,      -- epoch seconds UTC, exclusive
+    reason       TEXT NOT NULL,
+    PRIMARY KEY (metric, source_kind, period_start)
+) WITHOUT ROWID;
+
 -- The canonical resolver: best-known value per (metric, timestamp), chosen
 -- by the time-period priority map. Sources not listed for a period are
 -- excluded entirely (e.g. off-site KSAN data can be rank-limited to gap
@@ -201,6 +213,37 @@ PRIORITY = [
     ("2025-08-17", None,         "wu_ksandi354",  5),
 ]
 
+# Hygrometer failures, settled 2026-10-26 (see Dashboard/QC_SURVEY_2026-10-26.md
+# and scripts/calibrate_zephyr_humidity.py). The Zephyr sensor railed at 99%
+# (later at exactly 10%) far more than fog allows: the healthy sensors' worst
+# real months sit at 12-25% pinned, the Zephyr hit 49% in Jul 2010 and stayed
+# there. Its Nov 2016 replacement was healthy (+/-4 points vs MSDSD) until it
+# railed again from Aug 2017 (offset +6 to +15, pinned at 99 while MSDSD read
+# below 85) until the station changed. Everything computed from humidity is
+# equally unusable.
+_HUMIDITY_DERIVED = ("humidity", "dewpointf", "heatindexf", "humidexf",
+                     "wetbulbf", "apparenttempf", "feelslikef")
+QUALITY_PERIODS = [
+    (metric, "cumulus_log", start, end, reason)
+    for metric in _HUMIDITY_DERIVED
+    for start, end, reason in (
+        ("2010-07-01", "2016-12-01", "Zephyr hygrometer pinned at 99%/10%"),
+        ("2017-08-01", "2018-09-01", "replacement hygrometer pinned at 99%"),
+    )
+] + [
+    # Before the hygrometer failed, Cumulus's LOGGED dew point already
+    # disagreed with its own temperature and humidity by > 5 F on dry Santa
+    # Ana days (84 F dew point at 88 F and 13% RH on 2009-11-26). Humidity
+    # itself was fine then, so only the dew point is set aside.
+    ("dewpointf", "cumulus_log", "2009-09-01", "2010-07-01",
+     "Cumulus dew point inconsistent with its own temp/RH"),
+] + [
+    # The 2014 proxy neighbour railed too: whole days at exactly 100%, and
+    # 1% through June fog season.
+    (metric, "wu_ksandi84", "2014-05-01", "2014-07-01", "proxy hygrometer pinned at 100%/1%")
+    for metric in _HUMIDITY_DERIVED
+]
+
 
 def get_conn(db_path: Path | None = None) -> sqlite3.Connection:
     path = db_path or DB_PATH
@@ -234,6 +277,13 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             "INSERT OR IGNORE INTO source_priority(period_start, period_end, source_kind, rank) "
             "VALUES (?,?,?,?)",
             (start, end, kind, rank),
+        )
+    to_epoch = lambda iso: int(datetime.fromisoformat(iso).replace(tzinfo=timezone.utc).timestamp())
+    for metric, kind, start_iso, end_iso, reason in QUALITY_PERIODS:
+        conn.execute(
+            "INSERT OR REPLACE INTO quality_periods(metric, source_kind, period_start, period_end, reason) "
+            "VALUES (?,?,?,?,?)",
+            (metric, kind, to_epoch(start_iso), to_epoch(end_iso), reason),
         )
     conn.commit()
 
