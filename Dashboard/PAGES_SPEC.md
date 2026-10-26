@@ -10,10 +10,10 @@ decade-plus deeper than a typical MXUI site, which matters for Records/Extremes/
 |---|------|--------|-----|-------------|
 | 1 | **Console** | ✅ built | Live dashboard: current conditions, astro strip, trends, today/yesterday extremes, gauges, wind rose (12-card grid) | MXUI dashboard.php |
 | 2 | **Live** | ✅ built | Raw telemetry firehose — every WebSocket field, unstyled. Debug/verify view | — |
-| 3 | **Today/Yesterday** | ⏳ planned | All parameters, two-column today-vs-yesterday with hi/lo + times. Fixed 2-day compare | Beaumaris |
+| 3 | **Today/Yesterday** | ✅ built | All parameters, two-column today-vs-yesterday with hi/lo + times. Fixed 2-day compare | Beaumaris |
 | 4 | **Micro-forecast** | ⏳ Phase 5 | Hyperlocal AI forecast: NWS regional signal + 17yr archive → LLM bias-corrects to the Mt Soledad microclimate. Needs a synoptic feed (NWS gridpoint) first | the "Oracle" |
-| 5 | **Charts** | ⏳ deferred | Interactive time-series, four modes: Recent, Recent SelectaChart, Historic, Climate | Beaumaris (does this superbly) |
-| 6 | **Min/Max Records** | ⏳ planned | **All-time** hall of fame: single highest/lowest *ever* per parameter with date/time, tabbed by category (Temp/Wind/Rain/Humidity/Pressure). Static | Cumulus "All Time Records" (Cumulus UI Examples/…10_50_15…png) |
+| 5 | **Charts** | ✅ first version 2026-08-26 (zoom + historical picker still to come) | Interactive time-series, four modes: Recent, Recent SelectaChart, Historic, Climate | Beaumaris (does this superbly) |
+| 6 | **Min/Max Records** | ✅ built | **All-time** hall of fame: single highest/lowest *ever* per parameter with date/time, tabbed by category (Temp/Wind/Rain/Humidity/Pressure). Static | Cumulus "All Time Records" (Cumulus UI Examples/…10_50_15…png) |
 | 7 | **Synopsis by Period** | ✅ built 2026-10-26 | Per-period **report card**: fixed output, a View selector picks the range (This Month / This Year / This Period custom). Means (1-min, min+max, mean-min/max), extremes w/ days, rain days / dry days, wind run, sunshine hours | Cumulus "Averages and Extremes for [period]" (…10_49_53…png) |
 | 8 | **Analyze & Compare** | ⏳ design TBD | **NEW capability, not in Cumulus.** Comparison workbench: compare dates/periods/records over time (July 2010 vs July 2020; this-day-in-history across 17 yrs; decade-over-decade drift). Replaces the user's old by-hand value-copying. (Nav item currently points at the Analyst-v1 plotter as a stand-in) | own idea |
 | 9 | **Gauges** | ⏳ deferred toy | Full-page SteelSeries steam-gauge instrument panel — the ambient "fish tank" | CustomGauges.png |
