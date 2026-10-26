@@ -407,3 +407,47 @@ p {
 .ch-stat-val { font-size: 1.35rem; font-variant-numeric: tabular-nums; }
 .ch-stat-val em { font-size: 0.75rem; font-style: normal; color: var(--dim, #8fa0b3); margin-left: 0.15rem; }
 .ch-stat-range { font-size: 0.75rem; color: var(--dim, #8fa0b3); font-variant-numeric: tabular-nums; }
+
+/* ---------- Synopsis by Period ---------- */
+.synopsis { max-width: 1100px; margin: 0 auto; }
+.syn-controls { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; }
+.syn-controls .rec-tabs { margin-bottom: 0; }
+.syn-picker { display: flex; gap: 0.4rem; align-items: center; }
+.syn-picker select, .syn-picker input {
+  background: var(--panel, #1b2430); color: inherit; font: inherit;
+  border: 1px solid var(--line, #2c3947); border-radius: 4px; padding: 0.25rem 0.4rem;
+}
+.syn-step {
+  background: transparent; color: inherit; cursor: pointer;
+  border: 1px solid var(--line, #2c3947); border-radius: 4px; padding: 0.2rem 0.55rem;
+}
+.syn-step:disabled { opacity: 0.3; cursor: default; }
+.syn-to { opacity: 0.7; }
+.syn-card { transition: opacity 0.15s; }
+.syn-busy { opacity: 0.55; }
+.syn-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.9rem; align-items: start; }
+@media (max-width: 900px) { .syn-grid { grid-template-columns: 1fr; } }
+.syn-panel {
+  background: rgba(255,255,255,0.055); border-radius: 8px; overflow: hidden;
+  border: 1px solid rgba(128,128,128,0.18);
+}
+.syn-panel h3 {
+  margin: 0; padding: 0.45rem 0.8rem; font-size: 0.95rem; text-transform: uppercase;
+  letter-spacing: 0.07em; color: #6ea6ff; background: rgba(100,148,237,0.15);
+  border-bottom: 1px solid rgba(128,128,128,0.3);
+}
+.syn-panel table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.syn-panel td { padding: 0.3rem 0.8rem; border-bottom: 1px solid rgba(128,128,128,0.12); }
+.syn-panel tr:last-child td { border-bottom: none; }
+.syn-panel tr:nth-child(even) td { background: rgba(255,255,255,0.03); }
+.syn-label { opacity: 0.85; }
+.syn-val { text-align: right; font-weight: 600; white-space: nowrap; }
+.syn-unit { font-size: 0.72rem; opacity: 0.55; font-weight: 400; margin-left: 0.2rem; }
+.syn-when { font-size: 0.8rem; color: #9fb4e8; white-space: nowrap; width: 9.5rem; }
+.syn-notes { margin-top: 1rem; font-size: 0.85rem; color: #8fa0b3; display: grid; gap: 0.3rem; }
+.syn-badge {
+  margin-left: 0.6rem; padding: 0.05rem 0.5rem; border-radius: 999px; font-size: 0.75rem;
+  background: rgba(100,148,237,0.18); color: #9fb4e8;
+}
+.syn-proxy { color: #e0b060; }
+.syn-warn { color: #e0b060; }

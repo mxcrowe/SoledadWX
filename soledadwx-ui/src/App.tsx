@@ -5,6 +5,7 @@ import Console from "./Console";
 import Records from "./Records";
 import DayYest from "./DayYest";
 import Charts from "./Charts";
+import Synopsis from "./Synopsis";
 import { displayUnit, fmtKt, unitFactor, WIND_UNIT } from "./units";
 import "./App.css";
 
@@ -211,7 +212,7 @@ const NAV: [View, string, string][] = [
   ["extremes", "Soledad Extremes", "⇅"],
 ];
 
-const BUILT: View[] = ["console", "live", "today", "charts", "analyst", "records"];
+const BUILT: View[] = ["console", "live", "today", "charts", "analyst", "records", "synopsis"];
 
 function Placeholder({ label }: { label: string }) {
   return (
@@ -316,6 +317,7 @@ function App() {
       {view === "charts" && <Charts />}
       {view === "analyst" && <Analyst />}
       {view === "records" && <Records />}
+      {view === "synopsis" && <Synopsis />}
       {!BUILT.includes(view) && <Placeholder label={NAV.find((n) => n[0] === view)![1]} />}
 
       {view === "live" && (reading ? (

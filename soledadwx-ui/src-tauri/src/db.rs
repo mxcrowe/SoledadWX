@@ -509,7 +509,7 @@ pub fn range_stats(metric: &str, start: &str, end: &str) -> Result<RangeStats, S
 
 // ---------- Console page queries ----------
 
-#[derive(serde::Serialize, Default)]
+#[derive(serde::Serialize, Debug, Clone, Default)]
 pub struct Extreme {
     pub value: Option<f64>,
     pub ts: Option<i64>,
@@ -1474,4 +1474,511 @@ Not retrying for {} h.",
 
     println!("Backfill: done, {done} metric-values seen.");
     let _ = app.emit("backfill", serde_json::json!({ "active": false, "done": done }));
+}
+
+// ---------- Synopsis by Period ----------
+//
+// The report card for one period, after Cumulus's "Averages and Extremes".
+// Days are civil-local, start inclusive and end exclusive, as everywhere.
+// Most figures come from daily_rollups. Wind run and solar energy are
+// integrated over time instead, because a sample-weighted mean is biased by
+// how densely each era happened to log.
+
+/// A day is hot when its high reaches this (°F). Stands in for Cumulus's
+/// "air frosts", which never happen on Mount Soledad.
+const HOT_DAY_F: f64 = 90.0;
+
+/// A night is warm when the day's low stays at or above this (°F).
+const WARM_NIGHT_F: f64 = 70.0;
+
+/// Beaufort force 8 (34 kt), in mph. A day whose highest sustained wind
+/// reaches it is a gale day.
+const GALE_MPH: f64 = 34.0 / 0.868_976_241_900_647_9;
+
+/// The smallest daily total that makes a rain day (in): Cumulus's 0.2 mm
+/// default, rounded to the gauge's 0.01 in resolution.
+const RAIN_DAY_IN: f64 = 0.01;
+
+/// Wind run integration never bridges a gap longer than this. Cumulus-era
+/// days logged roughly every 15 minutes; 30 keeps them without inventing
+/// wind across a real outage.
+const WIND_GAP_MAX_SECS: i64 = 1800;
+
+/// Solar integration never bridges a gap longer than this (matches
+/// `solar_energy_kwh`, used by the Console).
+const SOLAR_GAP_MAX_SECS: i64 = 600;
+
+/// Sources that are another instrument, not ours. Their readings are labeled
+/// as proxy wherever they reach a figure.
+const PROXY_KINDS: [&str; 5] = ["msdsd", "ksan_metar", "wu_ksandi354", "wu_ksandi4366", "wu_ksandi84"];
+
+/// A value tied to a whole civil-local day, such as the highest minimum.
+#[derive(serde::Serialize, Debug, Clone, PartialEq)]
+pub struct DayValue {
+    pub value: f64,
+    pub day: String,
+}
+
+#[derive(serde::Serialize, Debug, Default)]
+pub struct SynTemp {
+    /// Mean of every reading (Cumulus: "Mean (1 minute)").
+    pub mean_all: Option<f64>,
+    /// Mean of each day's (min + max) / 2.
+    pub mean_minmax: Option<f64>,
+    pub mean_min: Option<f64>,
+    pub mean_max: Option<f64>,
+    pub min: Extreme,
+    pub max: Extreme,
+    pub highest_min: Option<DayValue>,
+    pub lowest_max: Option<DayValue>,
+    pub hot_days: i64,
+    pub warm_nights: i64,
+}
+
+#[derive(serde::Serialize, Debug, Default)]
+pub struct SynRain {
+    pub total_in: Option<f64>,
+    pub wettest: Option<DayValue>,
+    /// in/hr. Stitched from `rainratein` (to 2026-07) and `hourlyrainin`.
+    pub max_rate: Extreme,
+    pub rain_days: i64,
+    pub dry_days: i64,
+}
+
+#[derive(serde::Serialize, Debug, Default)]
+pub struct SynPressure {
+    pub highest: Extreme,
+    pub lowest: Extreme,
+}
+
+#[derive(serde::Serialize, Debug, Default)]
+pub struct SynWind {
+    pub highest_gust: Extreme,
+    /// Time-weighted mean speed (mph): integrated run / hours covered.
+    pub mean_mph: Option<f64>,
+    /// Integrated wind run (statute miles).
+    pub run_mi: Option<f64>,
+    pub gale_days: i64,
+}
+
+#[derive(serde::Serialize, Debug, Default)]
+pub struct SynHumidity {
+    pub mean_rh: Option<f64>,
+    pub mean_dewpoint: Option<f64>,
+    pub highest_dewpoint: Extreme,
+    pub lowest_rh: Extreme,
+}
+
+#[derive(serde::Serialize, Debug, Default)]
+pub struct SynSolar {
+    pub peak: Extreme,
+    pub max_uv: Extreme,
+    /// Mean over days with own-station solar data (kWh/m²).
+    pub mean_daily_kwh: Option<f64>,
+    pub energy_days: i64,
+}
+
+/// How many canonical temperature readings in the period came from each source.
+#[derive(serde::Serialize, Debug)]
+pub struct SourceShare {
+    pub kind: String,
+    pub readings: i64,
+    pub proxy: bool,
+}
+
+#[derive(serde::Serialize, Debug)]
+pub struct Synopsis {
+    pub start: String,
+    /// Exclusive, after clamping to tomorrow.
+    pub end: String,
+    pub days_in_period: i64,
+    pub days_with_data: i64,
+    pub includes_today: bool,
+    pub temp: SynTemp,
+    pub rain: SynRain,
+    pub pressure: SynPressure,
+    pub wind: SynWind,
+    pub humidity: SynHumidity,
+    pub solar: SynSolar,
+    pub sources: Vec<SourceShare>,
+}
+
+#[derive(Clone, Copy)]
+enum Pick {
+    Lowest,
+    Highest,
+}
+
+impl Pick {
+    fn order(self) -> &'static str {
+        match self {
+            Pick::Lowest => "ASC",
+            Pick::Highest => "DESC",
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Col {
+    Min,
+    Max,
+}
+
+impl Col {
+    fn value(self) -> &'static str {
+        match self {
+            Col::Min => "r.min_value",
+            Col::Max => "r.max_value",
+        }
+    }
+    fn ts(self) -> &'static str {
+        match self {
+            Col::Min => "r.ts_min",
+            Col::Max => "r.ts_max",
+        }
+    }
+}
+
+/// Day-range filter shared by every rollup query below: ?1 metric, ?2..?3 days.
+const ROLLUP_RANGE: &str = "FROM daily_rollups r JOIN metrics m ON m.id = r.metric_id
+     WHERE m.name = ?1 AND r.day_local >= ?2 AND r.day_local < ?3";
+
+struct DayAgg {
+    days: i64,
+    mean: Option<f64>,
+    mean_min: Option<f64>,
+    mean_max: Option<f64>,
+    mean_mid: Option<f64>,
+}
+
+fn day_agg(conn: &Connection, metric: &str, a: &str, b: &str) -> rusqlite::Result<DayAgg> {
+    let sql = format!(
+        "SELECT COUNT(*), SUM(r.avg_value * r.n_samples) / SUM(r.n_samples),
+                AVG(r.min_value), AVG(r.max_value), AVG((r.min_value + r.max_value) / 2.0)
+         {ROLLUP_RANGE}"
+    );
+    conn.query_row(&sql, rusqlite::params![metric, a, b], |r| {
+        Ok(DayAgg {
+            days: r.get(0)?,
+            mean: r.get(1)?,
+            mean_min: r.get(2)?,
+            mean_max: r.get(3)?,
+            mean_mid: r.get(4)?,
+        })
+    })
+}
+
+/// The period's lowest minimum or highest maximum, with the instant it
+/// happened. Ties go to the earliest, matching build_rollups.py.
+fn instant_extreme(conn: &Connection, metric: &str, a: &str, b: &str, pick: Pick) -> rusqlite::Result<Extreme> {
+    use rusqlite::OptionalExtension;
+    let col = match pick {
+        Pick::Lowest => Col::Min,
+        Pick::Highest => Col::Max,
+    };
+    let sql = format!(
+        "SELECT {v}, {t} {ROLLUP_RANGE} AND {v} IS NOT NULL ORDER BY {v} {o}, {t} LIMIT 1",
+        v = col.value(),
+        t = col.ts(),
+        o = pick.order()
+    );
+    let row = conn
+        .query_row(&sql, rusqlite::params![metric, a, b], |r| {
+            Ok((r.get::<_, f64>(0)?, r.get::<_, Option<i64>>(1)?))
+        })
+        .optional()?;
+    Ok(match row {
+        Some((value, ts)) => Extreme { value: Some(value), ts },
+        None => Extreme::default(),
+    })
+}
+
+/// A day-level extreme, such as the highest daily minimum.
+fn day_extreme(conn: &Connection, metric: &str, a: &str, b: &str, col: Col, pick: Pick) -> rusqlite::Result<Option<DayValue>> {
+    use rusqlite::OptionalExtension;
+    let sql = format!(
+        "SELECT {v}, r.day_local {ROLLUP_RANGE} AND {v} IS NOT NULL ORDER BY {v} {o}, r.day_local LIMIT 1",
+        v = col.value(),
+        o = pick.order()
+    );
+    conn.query_row(&sql, rusqlite::params![metric, a, b], |r| {
+        Ok(DayValue { value: r.get(0)?, day: r.get(1)? })
+    })
+    .optional()
+}
+
+/// Days whose `col` value is at least `threshold`.
+fn days_at_least(conn: &Connection, metric: &str, a: &str, b: &str, col: Col, threshold: f64) -> rusqlite::Result<i64> {
+    let sql = format!("SELECT COUNT(*) {ROLLUP_RANGE} AND {v} >= ?4", v = col.value());
+    conn.query_row(&sql, rusqlite::params![metric, a, b, threshold], |r| r.get(0))
+}
+
+/// Solar and UV rollups from the Zephyr years hold phantom zeros (that
+/// station had no photocell). A whole period peaking at zero is absence,
+/// not darkness.
+fn zero_is_absent(e: Extreme) -> Extreme {
+    if e.value == Some(0.0) {
+        Extreme::default()
+    } else {
+        e
+    }
+}
+
+fn local_midnight(d: chrono::NaiveDate) -> Result<i64, String> {
+    d.and_hms_opt(0, 0, 0)
+        .and_then(|t| t.and_local_timezone(chrono::Local).earliest())
+        .map(|t| t.timestamp())
+        .ok_or_else(|| format!("no local midnight on {d}"))
+}
+
+/// One metric's canonical readings over [a_ts, b_ts), with each reading's
+/// source kind, in time order.
+///
+/// Resolves source priority itself rather than reading
+/// `canonical_observations`, which took 20 s for October 2025. Two traps,
+/// both needed for the same rows in ~20 ms:
+/// - the view hands SQLite `p.period_start` as an index bound, and the
+///   current open-ended period makes a recent month scan a year of data.
+///   Collapsing the bounds with `max()`/`min()`, as `refresh_dirty_rollups`
+///   does, fixes that;
+/// - bounds that live only in the join can't reach the primary key, so the
+///   plain `o.ts_utc` range in WHERE is what lets SQLite seek on
+///   `(metric_id, ts_utc)` instead of reading the metric's whole history.
+fn canonical_series(conn: &Connection, metric: &str, a_ts: i64, b_ts: i64) -> rusqlite::Result<Vec<(i64, f64, String)>> {
+    let mut stmt = conn.prepare(
+        "WITH canon AS (
+             SELECT o.ts_utc, o.value, s.kind,
+                    ROW_NUMBER() OVER (PARTITION BY o.ts_utc ORDER BY p.rank) rn
+             FROM observations o
+             JOIN sources s ON s.id = o.source_id
+             JOIN source_priority p ON p.source_kind = s.kind
+                  AND o.ts_utc >= max(p.period_start, ?2)
+                  AND o.ts_utc <  min(coalesce(p.period_end, ?3), ?3)
+             WHERE o.metric_id = (SELECT id FROM metrics WHERE name = ?1)
+               AND o.ts_utc >= ?2 AND o.ts_utc < ?3
+         )
+         SELECT ts_utc, value, kind FROM canon WHERE rn = 1 ORDER BY ts_utc",
+    )?;
+    let rows = stmt
+        .query_map(rusqlite::params![metric, a_ts, b_ts], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+/// Trapezoidal wind run over the canonical record: (statute miles, hours covered).
+fn wind_run(conn: &Connection, a_ts: i64, b_ts: i64) -> rusqlite::Result<Option<(f64, f64)>> {
+    let rows = canonical_series(conn, "windspeedmph", a_ts, b_ts)?;
+    let mut miles = 0.0;
+    let mut secs: i64 = 0;
+    for w in rows.windows(2) {
+        let dt = w[1].0 - w[0].0;
+        if dt > 0 && dt <= WIND_GAP_MAX_SECS {
+            miles += (w[0].1 + w[1].1) / 2.0 * dt as f64 / 3600.0;
+            secs += dt;
+        }
+    }
+    Ok((secs > 0).then(|| (miles, secs as f64 / 3600.0)))
+}
+
+/// Mean daily solar energy (kWh/m²) over the days that have own-station
+/// solar data, integrated per civil-local day in one pass. `midnights` holds
+/// each day's start, then the period's end.
+fn mean_daily_solar(conn: &Connection, midnights: &[i64]) -> rusqlite::Result<(Option<f64>, i64)> {
+    let (Some(&a_ts), Some(&b_ts)) = (midnights.first(), midnights.last()) else {
+        return Ok((None, 0));
+    };
+    let mut stmt = conn.prepare(
+        "SELECT ts_utc, value FROM observations
+         WHERE metric_id = (SELECT id FROM metrics WHERE name = 'solarradiation')
+           AND source_id IN (2, 3, 4)
+           AND ts_utc >= ?1 AND ts_utc < ?2
+         ORDER BY ts_utc",
+    )?;
+    let rows: Vec<(i64, f64)> = stmt
+        .query_map(rusqlite::params![a_ts, b_ts], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut joules = vec![0.0_f64; midnights.len().saturating_sub(1)];
+    let mut day = 0;
+    for w in rows.windows(2) {
+        while day + 1 < joules.len() && w[0].0 >= midnights[day + 1] {
+            day += 1;
+        }
+        let dt = w[1].0 - w[0].0;
+        if dt > 0 && dt <= SOLAR_GAP_MAX_SECS {
+            joules[day] += (w[0].1 + w[1].1) / 2.0 * dt as f64;
+        }
+    }
+    let lit: Vec<f64> = joules.into_iter().filter(|&j| j > 0.0).map(|j| j / 3.6e6).collect();
+    let n = i64::try_from(lit.len()).unwrap_or(i64::MAX);
+    let mean = (!lit.is_empty()).then(|| lit.iter().sum::<f64>() / lit.len() as f64);
+    Ok((mean, n))
+}
+
+/// Builds the report card for civil-local days `start` (inclusive) to `end`
+/// (exclusive), both "YYYY-MM-DD". An end past today is clamped to tomorrow,
+/// so a running month includes today so far.
+///
+/// # Errors
+/// Returns an error for unparseable dates, an empty or wholly future period,
+/// or any database failure.
+pub fn synopsis(start: &str, end: &str) -> Result<Synopsis, String> {
+    use chrono::NaiveDate;
+    let parse = |s: &str| NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|e| format!("bad date {s:?}: {e}"));
+    let s = parse(start)?;
+    let today = chrono::Local::now().date_naive();
+    let tomorrow = today.succ_opt().ok_or("date overflow")?;
+    let e = parse(end)?.min(tomorrow);
+    if e <= s {
+        return Err(format!("no days to report between {start} and {end}"));
+    }
+    let a = s.format("%Y-%m-%d").to_string();
+    let b = e.format("%Y-%m-%d").to_string();
+    let days: Vec<NaiveDate> = s.iter_days().take_while(|d| *d < e).collect();
+    let mut midnights = days.iter().map(|d| local_midnight(*d)).collect::<Result<Vec<_>, _>>()?;
+    midnights.push(local_midnight(e)?);
+    let (a_ts, b_ts) = (midnights[0], midnights[midnights.len() - 1]);
+
+    let conn = Connection::open(db_path()).map_err(|e| e.to_string())?;
+    let db = |e: rusqlite::Error| e.to_string();
+
+    let t = day_agg(&conn, "tempf", &a, &b).map_err(db)?;
+    let temp = SynTemp {
+        mean_all: t.mean,
+        mean_minmax: t.mean_mid,
+        mean_min: t.mean_min,
+        mean_max: t.mean_max,
+        min: instant_extreme(&conn, "tempf", &a, &b, Pick::Lowest).map_err(db)?,
+        max: instant_extreme(&conn, "tempf", &a, &b, Pick::Highest).map_err(db)?,
+        highest_min: day_extreme(&conn, "tempf", &a, &b, Col::Min, Pick::Highest).map_err(db)?,
+        lowest_max: day_extreme(&conn, "tempf", &a, &b, Col::Max, Pick::Lowest).map_err(db)?,
+        hot_days: days_at_least(&conn, "tempf", &a, &b, Col::Max, HOT_DAY_F).map_err(db)?,
+        warm_nights: days_at_least(&conn, "tempf", &a, &b, Col::Min, WARM_NIGHT_F).map_err(db)?,
+    };
+
+    // Daily rain: each day's max of the midnight-resetting counter is its total.
+    let rain_sql = format!(
+        "SELECT COUNT(*), SUM(r.max_value), COUNT(CASE WHEN r.max_value >= ?4 THEN 1 END) {ROLLUP_RANGE}"
+    );
+    let (rain_measured, total_in, rain_days): (i64, Option<f64>, i64) = conn
+        .query_row(&rain_sql, rusqlite::params!["dailyrainin", a, b, RAIN_DAY_IN], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })
+        .map_err(db)?;
+    let rate_old = instant_extreme(&conn, "rainratein", &a, &b, Pick::Highest).map_err(db)?;
+    let rate_new = instant_extreme(&conn, "hourlyrainin", &a, &b, Pick::Highest).map_err(db)?;
+    let max_rate = if rate_new.value.unwrap_or(f64::MIN) > rate_old.value.unwrap_or(f64::MIN) {
+        rate_new
+    } else {
+        rate_old
+    };
+    let rain = SynRain {
+        total_in,
+        wettest: day_extreme(&conn, "dailyrainin", &a, &b, Col::Max, Pick::Highest).map_err(db)?,
+        max_rate,
+        rain_days,
+        dry_days: rain_measured - rain_days,
+    };
+
+    let pressure = SynPressure {
+        highest: instant_extreme(&conn, "baromrelin", &a, &b, Pick::Highest).map_err(db)?,
+        lowest: instant_extreme(&conn, "baromrelin", &a, &b, Pick::Lowest).map_err(db)?,
+    };
+
+    let run = wind_run(&conn, a_ts, b_ts).map_err(db)?;
+    let wind = SynWind {
+        highest_gust: instant_extreme(&conn, "windgustmph", &a, &b, Pick::Highest).map_err(db)?,
+        mean_mph: run.map(|(mi, h)| mi / h),
+        run_mi: run.map(|(mi, _)| mi),
+        gale_days: days_at_least(&conn, "windspeedmph", &a, &b, Col::Max, GALE_MPH).map_err(db)?,
+    };
+
+    let rh = day_agg(&conn, "humidity", &a, &b).map_err(db)?;
+    let dp = day_agg(&conn, "dewpointf", &a, &b).map_err(db)?;
+    let humidity = SynHumidity {
+        mean_rh: rh.mean,
+        mean_dewpoint: dp.mean,
+        highest_dewpoint: instant_extreme(&conn, "dewpointf", &a, &b, Pick::Highest).map_err(db)?,
+        lowest_rh: instant_extreme(&conn, "humidity", &a, &b, Pick::Lowest).map_err(db)?,
+    };
+
+    let (mean_daily_kwh, energy_days) = mean_daily_solar(&conn, &midnights).map_err(db)?;
+    let solar = SynSolar {
+        peak: zero_is_absent(instant_extreme(&conn, "solarradiation", &a, &b, Pick::Highest).map_err(db)?),
+        max_uv: zero_is_absent(instant_extreme(&conn, "uv", &a, &b, Pick::Highest).map_err(db)?),
+        mean_daily_kwh,
+        energy_days,
+    };
+
+    let mut counts: Vec<(String, i64)> = Vec::new();
+    for (_, _, kind) in canonical_series(&conn, "tempf", a_ts, b_ts).map_err(db)? {
+        match counts.iter_mut().find(|(k, _)| *k == kind) {
+            Some((_, n)) => *n += 1,
+            None => counts.push((kind, 1)),
+        }
+    }
+    counts.sort_by(|x, y| y.1.cmp(&x.1).then_with(|| x.0.cmp(&y.0)));
+    let sources = counts
+        .into_iter()
+        .map(|(kind, readings)| {
+            let proxy = PROXY_KINDS.contains(&kind.as_str());
+            SourceShare { kind, readings, proxy }
+        })
+        .collect();
+
+    Ok(Synopsis {
+        start: a,
+        end: b,
+        days_in_period: i64::try_from(days.len()).unwrap_or(i64::MAX),
+        days_with_data: t.days,
+        includes_today: s <= today && today < e,
+        temp,
+        rain,
+        pressure,
+        wind,
+        humidity,
+        solar,
+        sources,
+    })
+}
+
+#[cfg(test)]
+mod synopsis_tests {
+    use super::*;
+
+    /// Cumulus's own "Averages and Extremes for July 2010" screen
+    /// (Dashboard/Cumulus UI Examples/2026-07-06 10_49_53-Cumulus.png),
+    /// computed independently from the same station. Needs the Archive, so
+    /// run with `cargo test -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "reads the live Archive"]
+    fn july_2010_matches_cumulus() {
+        let s = synopsis("2010-07-01", "2010-08-01").expect("synopsis for July 2010");
+        let near = |got: Option<f64>, want: f64, tol: f64, what: &str| {
+            let g = got.unwrap_or_else(|| panic!("{what}: no value, want {want}"));
+            assert!((g - want).abs() <= tol, "{what}: got {g}, Cumulus says {want}");
+        };
+        let kt = |mph: Option<f64>| mph.map(|v| v * 0.868_976_241_900_647_9);
+        let t = &s.temp;
+        near(t.mean_all, 64.8, 0.05, "mean (1 minute)");
+        near(t.mean_minmax, 66.8, 0.05, "mean (min+max)");
+        near(t.mean_min, 60.4, 0.05, "mean minimum");
+        near(t.mean_max, 73.1, 0.05, "mean maximum");
+        near(t.min.value, 57.9, 0.001, "minimum");
+        near(t.max.value, 99.1, 0.001, "maximum");
+        assert_eq!(t.highest_min, Some(DayValue { value: 66.7, day: "2010-07-16".into() }));
+        assert_eq!(t.lowest_max, Some(DayValue { value: 64.0, day: "2010-07-08".into() }));
+        near(s.rain.total_in, 0.03, 0.001, "rain total");
+        assert_eq!(s.rain.wettest, Some(DayValue { value: 0.02, day: "2010-07-22".into() }));
+        near(s.rain.max_rate.value, 0.04, 0.001, "high rain rate");
+        assert_eq!((s.rain.rain_days, s.rain.dry_days), (2, 29), "rain days / dry days");
+        near(s.pressure.highest.value, 30.10, 0.001, "highest pressure");
+        // Cumulus reports 29.55 on the 16th: a one-reading spike in its
+        // high-rate internal sampling (its own 03:10 log line says 29.92).
+        // The logged record never dipped below 29.81, so that is what we report.
+        near(s.pressure.lowest.value, 29.81, 0.001, "lowest pressure (logged)");
+        near(kt(s.wind.highest_gust.value), 13.2, 0.05, "highest gust (kt)");
+        near(kt(s.wind.mean_mph), 1.2, 0.05, "average speed (kt)");
+        near(kt(s.wind.run_mi), 911.2, 1.0, "wind run (nm)");
+        assert_eq!(s.wind.gale_days, 0, "gale days");
+    }
 }

@@ -75,6 +75,10 @@ while for context, then prune). Newest context at the bottom of each item.
   section. *(Found Jul 8 2026; see scratchpad/solar_decay.py.)*
 
 - [ ] **Wind Run from rollups is `avg x 24` — fragile on unevenly-sampled days.**
+  **Partly fixed 2026-10-26:** Synopsis by Period now integrates wind run over time
+  (`db::wind_run`, trapezoidal, gaps over 30 min not bridged) and reproduces Cumulus's
+  July 2010 figure to 0.02% (911.0 vs 911.2 nm). `db::range_stats` (the Analyst) still
+  uses `avg x 24`; switch it to `wind_run` too.
   `db::range_stats` computes wind run as `SUM(avg_value * 24.0)`, which assumes
   the day's samples are an unbiased 24 h mean. Sample density varies wildly by
   era (2014-02-28: 99 samples; 2023-02-22: 118; 2021-01-25: 287), so a day whose
@@ -555,6 +559,10 @@ while for context, then prune). Newest context at the bottom of each item.
   future station at a different cadence stays honest.
 
 ## Housekeeping (from the G:→D: move, 2026-10-26)
+
+- [ ] **Run `cargo fmt` as its own commit.** The Rust was never rustfmt-formatted
+  (64 hunks, ~1,000 diff lines on 2026-10-26), so formatting alongside a feature
+  would bury the feature in noise. Do it once, alone, then keep it formatted.
 
 The move shrank SoledadWX from ~19 GB to 4.2 GB. ~90% of that was one folder.
 
