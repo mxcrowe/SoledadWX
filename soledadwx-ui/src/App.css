@@ -175,6 +175,7 @@ p {
 .band { fill: rgba(100, 148, 237, 0.25); }
 .avgline { stroke: cornflowerblue; stroke-width: 1.6; }
 .chart-empty, .chart-note { text-align: center; opacity: 0.7; font-size: 0.85rem; }
+.ch-hover-time { text-align: center; font-size: 1.35rem; font-weight: 600; color: #f2f5fa; font-variant-numeric: tabular-nums; margin-top: 0.8rem; min-height: 1.8rem; white-space: pre; }
 
 /* ---------- Console page ---------- */
 .console { max-width: 2400px; margin: 0 auto; text-align: left; }

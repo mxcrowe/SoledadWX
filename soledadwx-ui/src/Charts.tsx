@@ -296,12 +296,22 @@ export default function Charts() {
         })}
       </div>
 
+      {/* The cursor's moment, prominent. The line keeps its height when the
+          mouse leaves so the page doesn't jump. */}
+      <div className="ch-hover-time">
+        {hoverT != null
+          ? new Date(hoverT * 1000).toLocaleString(undefined, {
+              weekday: "short", month: "short", day: "numeric", year: "numeric",
+              hour: "numeric", minute: "2-digit",
+            })
+          : " "}
+      </div>
+
       <p className="chart-note">
         {bucketS != null &&
           (bucketS <= 1
             ? "Raw observations — no averaging."
             : `Bucketed to ${bucketS < 3600 ? `${Math.round(bucketS / 60)} min` : `${Math.round(bucketS / 3600)} h`}.`)}
-        {hoverT != null && ` · ${new Date(hoverT * 1000).toLocaleString()}`}
       </p>
     </div>
   );
