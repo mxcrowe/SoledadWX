@@ -70,3 +70,6 @@ HP2000*/
 
 # Raw source exports (large, reproducible from the MesoWest portal)
 data/raw/**/*.csv
+
+# Deployed Monitor (scripts\deploy_monitor.ps1); the build cache stays disposable
+/bin/
