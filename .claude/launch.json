@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "soledadwx-ui-dev",
+      "runtimeExecutable": "pwsh",
+      "runtimeArgs": ["-Command", "Set-Location D:/Dev/SoledadWX/soledadwx-ui; npm run dev"],
+      "port": 1420
+    },
+    {
+      "name": "barograph-shot-sink",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["D:/Dev/SoledadWX/Dashboard/Barograph/model/dev_shot_sink.py"],
+      "port": 8765
+    }
+  ]
+}

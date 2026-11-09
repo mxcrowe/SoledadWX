@@ -654,6 +654,17 @@ against over-building the UI.)
 ### Skip — climate/region mismatch
 Saharan dust & AOD, European pollen, Mediterranean-wind rose, ASX200 ticker.
 
+## Barograph page (started 2026-11-09)
+
+The look test is built: see `Dashboard/Barograph/model/README.md` for the pipeline and the list of
+what is still to do (live chart from the Archive, drag to rewind, paper-change levers, live dial).
+Open decisions for Michael:
+
+- Do the generated page assets (`soledadwx-ui/public/barograph/`, 24 MB) live in git, or are they
+  rebuilt with `export_web.py`? The Monitor cannot be built without them.
+- The veneer figure on the slim hood frame is lively; calmer straight grain there is an option.
+- Pressure scale on the chart: the true 28 to 31 inHg, or an expanded one that shows San Diego's small swings.
+
 ## Product roadmap (pointer, not duplicated here)
 
 Page-build order lives in `Dashboard/PAGES_SPEC.md`. Next cheapest wins:

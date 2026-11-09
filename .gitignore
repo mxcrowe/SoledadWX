@@ -73,3 +73,10 @@ data/raw/**/*.csv
 
 # Deployed Monitor (scripts\deploy_monitor.ps1); the build cache stays disposable
 /bin/
+
+# Barograph: downloaded source textures (listed in Dashboard/Barograph/assets/SOURCES.md),
+# textures the model scripts generate, and render output
+Dashboard/Barograph/assets/*.jpg
+Dashboard/Barograph/assets/*.hdr
+Dashboard/Barograph/model/tex/
+Dashboard/Barograph/renders/
