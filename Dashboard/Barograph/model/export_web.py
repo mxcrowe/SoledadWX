@@ -34,9 +34,9 @@ def main():
     blender("make_studio_env.py", "--out", str(DEST / "studio_env.hdr"), "--width", "1024")
     blender("make_view_lut.py", "--out", str(DEST / "view_lut.png"))
     Image.MAX_IMAGE_PIXELS = None
-    for src, dst, quality in (("rosewood_veneer1_diff_8k.jpg", "wood_diff.jpg", 88),
-                              ("rosewood_veneer1_nor_gl_8k.jpg", "wood_normal.jpg", 90)):
-        Image.open(ASSETS / src).resize((WOOD_PX, WOOD_PX), Image.LANCZOS).save(DEST / dst, quality=quality)
+    for src, dst, quality in ((HERE / "tex" / "wood_diff_clean.jpg", "wood_diff.jpg", 88),
+                              (ASSETS / "rosewood_veneer1_nor_gl_8k.jpg", "wood_normal.jpg", 90)):
+        Image.open(src).resize((WOOD_PX, WOOD_PX), Image.LANCZOS).save(DEST / dst, quality=quality)
     for name in ("dial.png", "chart_placeholder.png"):
         shutil.copyfile(HERE / "tex" / name, DEST / name)
     for f in sorted(DEST.iterdir()):

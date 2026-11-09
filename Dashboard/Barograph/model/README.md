@@ -10,6 +10,7 @@ Blender builds the instrument and works out the soft, shadowed, bounced light on
 
 | Script | Run with | Makes |
 |---|---|---|
+| `clean_wood.py` | system Python (Pillow, scipy) | `tex/wood_diff_clean.jpg`: the rosewood scan with its pale flecks filled |
 | `make_textures.py` | system Python (Pillow) | `tex/dial.png`, `tex/chart_placeholder.png`: our own artwork |
 | `make_studio_env.py` | Blender | `tex/studio_env.hdr`: the lighting, a dark studio with softboxes |
 | `make_view_lut.py` | Blender | Blender's view transform (AgX, Medium High Contrast) as a lookup table |
@@ -20,6 +21,10 @@ Blender builds the instrument and works out the soft, shadowed, bounced light on
 Blender is 5.2.3 LTS at `E:\Graphics\Blender\blender.exe`, always run as `--background --factory-startup --python <script> -- <options>`.
 
 To rebuild everything the page needs:
+
+```bash
+python clean_wood.py
+```
 
 ```bash
 python make_textures.py
@@ -50,7 +55,8 @@ E:/Graphics/Blender/blender.exe --background --factory-startup --python build_ba
 - **One reflective layer on wood.** The lacquer coat mirrors; the wood under it does not. A live renderer blurs wide reflections too much, and this lighting (dark room, bright softboxes) shows it.
 - **No sheen on the table.** The table is baked, and a bake is only right from every angle if the cloth looks the same from every angle.
 - **Nothing lit may rotate.** Baked light would turn with it. To turn the drum, scroll the chart texture.
-- **The studio image stops at the horizon.** Below it is the table. A softbox painted below the horizon lights nothing in Blender but shows up in the page's reflections.
+- **The studio image stops at the horizon, and the table below it stays lit.** Blender's real table hides everything below the horizon, but the page's reflections see it. A softbox painted down there, or a dark far table, showed up on the polished sides.
+- **Veneer wraps round the base.** One strip runs round all four sides so the grain turns the corners; its ends meet at the back left.
 - **Shared numbers** (arm length, chart geometry, dial scale) are marked "as in" or "must agree" in the files that share them.
 
 ## Still to do

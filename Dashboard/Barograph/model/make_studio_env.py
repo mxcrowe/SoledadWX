@@ -27,9 +27,8 @@ OUT = os.path.abspath(_a.out)
 
 ZENITH = (0.030, 0.030, 0.032)        # dark ceiling
 HORIZON = (0.110, 0.104, 0.096)       # dim walls: what vertical brass sees
-# Below the horizon is the table: lit green near the instrument, dark far off.
+# Below the horizon is the table, lit green, as the case's sides see it nearby.
 TABLE_NEAR = (0.014, 0.056, 0.038)
-TABLE_FAR = (0.001, 0.003, 0.002)
 
 # name, azimuth, elevation, half width, half height (degrees), radiance, colour
 SOFTBOXES = [
@@ -65,8 +64,11 @@ def main():
     below = smoothstep(0.0, -0.06, d[..., 2])[..., None]
     high = smoothstep(0.0, 0.75, d[..., 2])[..., None]
     walls = np.array(HORIZON) * (1.0 - high) + np.array(ZENITH) * high
-    near = smoothstep(math.sin(math.radians(6.0)), math.sin(math.radians(40.0)), -d[..., 2])[..., None]
-    table = np.array(TABLE_FAR) * (1.0 - near) + np.array(TABLE_NEAR) * near
+    # Below the horizon is the lit table. In Blender the real table hides this part
+    # of the image; it matters only to the page's reflections, where a dark band
+    # just under the horizon showed as a dark line across the case's sides. So the
+    # table stays lit right up to the horizon.
+    table = np.broadcast_to(np.array(TABLE_NEAR), img.shape)
     img[:] = walls * (1.0 - below) + table * below
 
     for _name, az, elev, half_w, half_h, radiance, colour in SOFTBOXES:

@@ -78,7 +78,7 @@ def parse_args():
     p.add_argument("--bake-size", type=int, default=2048)
     p.add_argument("--bake-samples", type=int, default=384)
     p.add_argument("--wood", default="rosewood", choices=["rosewood", "oak"])
-    p.add_argument("--view", default="hero", choices=["hero", "front"])
+    p.add_argument("--view", default="hero", choices=["hero", "front", "right"])
     p.add_argument("--samples", type=int, default=256)
     p.add_argument("--res", default="1920x1080")
     p.add_argument("--pressure", type=float, default=29.777)
@@ -141,7 +141,10 @@ def make_wood(name, darken=1.0):
     has no specular of its own. That is also what a live renderer does well.
     """
     mat, nt, bsdf, _ = new_material(name)
-    diff = image_node(nt, os.path.join(ASSETS, f"{WOOD_STEM}_diff_{WOOD_RES}.jpg"))
+    cleaned = os.path.join(TEX, "wood_diff_clean.jpg")          # clean_wood.py
+    if ARGS.wood == "rosewood" and not os.path.exists(cleaned):
+        raise SystemExit("Run clean_wood.py first: it makes tex/wood_diff_clean.jpg")
+    diff = image_node(nt, cleaned if ARGS.wood == "rosewood" else os.path.join(ASSETS, f"{WOOD_STEM}_diff_{WOOD_RES}.jpg"))
     if darken != 1.0:
         mul = nt.nodes.new("ShaderNodeMixRGB")
         mul.blend_type = "MULTIPLY"
@@ -366,28 +369,35 @@ def lathe(name, prof, mat=None, segs=96, sweep=None, uv=None, uv_r=1.0, **kw):
 def loft_rect(name, hx, hy, prof, mat, cap_top=True):
     """Sweep a moulding profile of (inset, z) points around a rectangle.
 
-    Each side is its own board with the grain along its length and clean mitres.
+    One strip of veneer wraps all the way round, so the grain runs on round
+    each corner instead of jumping. Its two ends meet at the back left corner,
+    where it is least seen.
     """
     arc = [0.0]
     for (i0, z0), (i1, z1) in zip(prof, prof[1:]):
         arc.append(arc[-1] + math.hypot(i1 - i0, z1 - z0))
-    sides = [((-1, -1), (1, -1)), ((1, -1), (1, 1)), ((1, 1), (-1, 1)), ((-1, 1), (-1, -1))]
+    # Left side (back to front), front, right, back: anticlockwise seen from above.
+    sides = [((-1, 1), (-1, -1)), ((-1, -1), (1, -1)), ((1, -1), (1, 1)), ((1, 1), (-1, 1))]
+    off = wood_offset()
     verts, faces, uvs = [], [], []
+    walked = [0.0] * len(prof)         # distance round the strip so far, per profile row
     for (sx0, sy0), (sx1, sy1) in sides:
-        off = wood_offset()
-        along_x = sy0 == sy1
         base = len(verts)
-        for inset, z in prof:
+        lengths = []
+        for k, (inset, z) in enumerate(prof):
             verts.append((sx0 * (hx - inset), sy0 * (hy - inset), z))
             verts.append((sx1 * (hx - inset), sy1 * (hy - inset), z))
+            a, b = verts[-2], verts[-1]
+            lengths.append(math.hypot(b[0] - a[0], b[1] - a[1]))
         for k in range(len(prof) - 1):
             quad = (base + 2 * k, base + 2 * k + 1, base + 2 * k + 3, base + 2 * k + 2)
             faces.append(quad)
             face_uv = []
             for vi in quad:
-                x, y, _ = verts[vi]
-                face_uv.append(wood_uv(arc[(vi - base) // 2], x if along_x else y, off))
+                row, end = (vi - base) // 2, (vi - base) % 2
+                face_uv.append(wood_uv(arc[row], walked[row] + end * lengths[row], off))
             uvs.append(face_uv)
+        walked = [w + n for w, n in zip(walked, lengths)]
     if cap_top:
         inset, z = prof[-1]
         off = wood_offset()
@@ -731,7 +741,8 @@ cam = bpy.data.objects.new("Camera", cam_data)
 scene.collection.objects.link(cam)
 scene.camera = cam
 VIEWS = {"hero": (16.0, 10.0, 1750.0, 85.0, (0.0, 0.0, 118.0)),
-         "front": (0.0, 9.0, 1150.0, 80.0, (0.0, 0.0, 132.0))}
+         "front": (0.0, 9.0, 1150.0, 80.0, (0.0, 0.0, 132.0)),
+         "right": (-58.0, 12.0, 1500.0, 85.0, (40.0, 0.0, 70.0))}
 yaw, elev, dist, lens, target = VIEWS[ARGS.view]
 cam_data.lens = lens
 yaw_r, elev_r = math.radians(yaw), math.radians(elev)
