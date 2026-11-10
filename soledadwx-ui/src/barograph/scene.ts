@@ -422,7 +422,7 @@ export async function createBarograph(canvas: HTMLCanvasElement, options: Barogr
   controls.enableDamping = true;
   controls.minDistance = 0.9;
   controls.maxDistance = 2.6;
-  controls.minPolarAngle = THREE.MathUtils.degToRad(50);
+  controls.minPolarAngle = THREE.MathUtils.degToRad(10); // nearly overhead, to look down through the top glass
   controls.maxPolarAngle = THREE.MathUtils.degToRad(88);
   controls.minAzimuthAngle = THREE.MathUtils.degToRad(-70);
   controls.maxAzimuthAngle = THREE.MathUtils.degToRad(70);
