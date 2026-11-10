@@ -15,14 +15,18 @@ Options after `--`:
                     light.png (diffuse light, second UV set), ao.png, table.png
   --save PATH       .blend to open in Blender
   --wood NAME       rosewood (default) or oak
-  --view NAME       hero (default) or front
+  --view NAME       hero (default), front, right, or a close view of the movement:
+                    mech, mech_left, mech_back, mech_top
+  --bare            leave the hood off, to see the movement plainly
   --samples N       Cycles samples (default 256)
   --res WxH         default 1920x1080
   --pressure P      inHg shown by pen and needle (default: where the placeholder trace ends)
+  --temp F          degrees Fahrenheit shown by the dial thermometer (default 68)
   --wood-scale K    shrink the veneer figure to suit a small case (default 0.5)
   --env-rot DEG     turn the studio lighting about the vertical
 
-Names the web page relies on: Drum, ChartPaper, PenArm, Needle, Dial.
+Names the web page relies on: Drum, ChartClip, PenArbor, PenArm, CrankPin, TopLever,
+LeverPin, StackPin, Link, StackPost, PenLifter, Needle, Table, and the material names.
 """
 import argparse
 import math
@@ -64,7 +68,24 @@ PIVOT = (DRUM_X + PEN_ARM, DRUM_Y - PAPER_R - 3.4, CHART_MID_Z)
 DIAL_C = (48.0, -62.0, 176.0)
 DIAL_R, DIAL_HOLE = 54.0, 27.0
 DIAL_DEG_PER_INHG = 66.0               # as in make_textures.py
+THERMO_F0_DEG, THERMO_F140_DEG = 236.0, 124.0     # as in make_textures.py: clockwise from the top of the dial
+THERMO_SWEEP = (-150.0, -30.0)         # the tube, bulb end first, anticlockwise from the dial's +X (scene.ts must agree)
 STACK_XY = (2.0, 12.0)
+
+# The movement stands on its own satin plate, on top of the polished bed plate.
+MECH_TOP = PLATE_TOP + 3.0
+MECH_X, MECH_Y = (-31.0, 121.0), (-64.0, 60.0)
+BALL_R = 4.7                           # the ball in each pillar that holds an arbor's pivot
+TOP_ARBOR = (18.0, 181.0)              # x and z of the top lever's arbor; like the pen's, it runs along Y
+TALL_Y, LOW_Y = (-21.0, 45.0), (-53.5, 30.0)      # where each bridge's two pillars stand
+LEVER_Y = STACK_XY[1]                  # the lever, link and crank all work in this plane
+LEVER_PIN = (60.0, 0.0)                # from the top arbor to the link's upper pin, at mid scale
+STACK_PIN = (STACK_XY[0] - TOP_ARBOR[0], 0.0)     # from the top arbor to the point over the stack
+CRANK_PIN = (-17.0, -4.5)              # from the pen arbor to the link's lower pin, at mid scale
+LINK = math.hypot(PIVOT[0] + CRANK_PIN[0] - TOP_ARBOR[0] - LEVER_PIN[0], PIVOT[2] + CRANK_PIN[1] - TOP_ARBOR[1] - LEVER_PIN[1])
+LIFTER = (-8.0, -50.0)                 # the pen lifter's stud
+INK_WELL = (-10.0, 46.0)
+ENGRAVING_FONT = "C:/Windows/Fonts/COPRGTB.TTF"   # Copperplate Gothic, as on the dial
 
 
 # ---- Arguments -------------------------------------------------------------
@@ -78,10 +99,12 @@ def parse_args():
     p.add_argument("--bake-size", type=int, default=2048)
     p.add_argument("--bake-samples", type=int, default=384)
     p.add_argument("--wood", default="rosewood", choices=["rosewood", "oak"])
-    p.add_argument("--view", default="hero", choices=["hero", "front", "right"])
+    p.add_argument("--view", default="hero", choices=["hero", "front", "right", "mech", "mech_left", "mech_back", "mech_top"])
     p.add_argument("--samples", type=int, default=256)
     p.add_argument("--res", default="1920x1080")
     p.add_argument("--pressure", type=float, default=29.777)
+    p.add_argument("--temp", type=float, default=68.0)
+    p.add_argument("--bare", action="store_true")
     p.add_argument("--wood-scale", type=float, default=0.5)
     p.add_argument("--wood-gain", type=float, default=1.25)
     p.add_argument("--env-rot", type=float, default=0.0)
@@ -239,6 +262,26 @@ def make_felt(name):
     nt.links.new(coord.outputs["Object"], noise.inputs["Vector"])
     nt.links.new(noise.outputs["Fac"], bump.inputs["Height"])
     nt.links.new(bump.outputs["Normal"], bsdf.inputs["Normal"])
+    return mat
+
+
+def make_thermo(name, level):
+    """The thermometer tube: red spirit up to `level` of its length (by U), enamel white beyond."""
+    mat, nt, bsdf, _ = new_material(name)
+    uv = nt.nodes.new("ShaderNodeUVMap")
+    uv.uv_map = "UVMap"
+    parts = nt.nodes.new("ShaderNodeSeparateXYZ")
+    below = nt.nodes.new("ShaderNodeMath")
+    below.operation = "LESS_THAN"
+    below.inputs[1].default_value = level
+    pick = nt.nodes.new("ShaderNodeMixRGB")
+    pick.inputs["Color1"].default_value = rgba(*THERMO_WHITE)
+    pick.inputs["Color2"].default_value = rgba(*THERMO_RED)
+    nt.links.new(uv.outputs["UV"], parts.inputs["Vector"])
+    nt.links.new(parts.outputs["X"], below.inputs[0])
+    nt.links.new(below.outputs[0], pick.inputs["Fac"])
+    nt.links.new(pick.outputs["Color"], bsdf.inputs["Base Color"])
+    set_inputs(bsdf, Roughness=0.08)
     return mat
 
 
@@ -498,6 +541,181 @@ def pillar_profile(z0, z1, r=3.4):
             (r, z1 - 5.0), (r + 1.4, z1 - 4.0), (r + 1.4, z1 - 2.4), (r, z1 - 1.6), (r - 0.4, z1), (0, z1)]
 
 
+def box(name, center, size, mat, bevel=0.4, **kw):
+    """A plain metal block: a board without the veneer bookkeeping."""
+    keep = _wood_seq[0]
+    ob = board(name, center, size, "x", mat, bevel=bevel, **kw)
+    _wood_seq[0] = keep
+    ob.data.uv_layers.remove(ob.data.uv_layers[0])
+    return ob
+
+
+def ball_pts(zc, r, r0, r1, steps=10):
+    """Profile of a ball centred at height zc, between necks of radius r0 (below) and r1 (above)."""
+    a0, a1 = -math.acos(min(1.0, r0 / r)), math.acos(min(1.0, r1 / r))
+    angles = [a0 + (a1 - a0) * i / steps for i in range(steps + 1)]
+    return [(r * math.cos(a), zc + r * math.sin(a)) for a in angles]
+
+
+def turned(name, prof, mat, axis, loc=(0, 0, 0), segs=32, **kw):
+    """A lathe whose profile heights run along +X ("x"), -X ("-x"), +Y ("y") or +Z ("z") from `loc`."""
+    rot = {"x": (0, 90, 0), "-x": (0, -90, 0), "y": (-90, 0, 0), "z": (0, 0, 0)}[axis]
+    return lathe(name, prof, mat, segs=segs, closed=True, loc=loc, rot=rot, **kw)
+
+
+def ring_pts(r, n=24):
+    return [(r * math.cos(2 * math.pi * i / n), r * math.sin(2 * math.pi * i / n)) for i in range(n)]
+
+
+def extruded(pts, z0, z1):
+    """Vertices and faces of an outline of (x, y) points pulled from z0 up to z1."""
+    n = len(pts)
+    verts = [(x, y, z0) for x, y in pts] + [(x, y, z1) for x, y in pts]
+    faces = [tuple(range(n - 1, -1, -1)), tuple(range(n, 2 * n))]
+    faces += [(i, (i + 1) % n, n + (i + 1) % n, n + i) for i in range(n)]
+    return verts, faces
+
+
+def solid(name, parts, mat, **kw):
+    """One object from several extruded pieces."""
+    verts, faces = [], []
+    for part_verts, part_faces in parts:
+        base = len(verts)
+        verts += part_verts
+        faces += [tuple(base + i for i in face) for face in part_faces]
+    return new_object(name, verts, faces, None, mat, closed=True, **kw)
+
+
+def slotted_head(name, r, h, mat, slot=0.0, **kw):
+    """A cheese-head screw standing on its local Z=0, with a real slot across the top."""
+    a = math.asin(0.18)                # the slot is 0.36 r wide
+    t = math.radians(slot)
+    parts = [extruded(ring_pts(r), 0.0, 0.55 * h)]
+    for side in (0.0, math.pi):
+        angles = [t + side + a + (math.pi - 2 * a) * i / 12 for i in range(13)]
+        parts.append(extruded([(r * math.cos(b), r * math.sin(b)) for b in angles], 0.55 * h, h))
+    return solid(name, parts, mat, **kw)
+
+
+def knurled(name, r, z0, z1, mat, teeth=30, depth=0.4, **kw):
+    """A knurled rim: a disc with a toothed edge."""
+    pts = []
+    for i in range(teeth):
+        for k, rr in ((0.0, r), (0.5, r - depth)):
+            a = 2 * math.pi * (i + k) / teeth
+            pts.append((rr * math.cos(a), rr * math.sin(a)))
+    return solid(name, [extruded(pts, z0, z1)], mat, smooth=None, **kw)
+
+
+def strap(points, w, steps=6):
+    """Outline of a flat bar of half-width w along a path of (x, y) points.
+
+    The ends are rounded, and so is the outside of each bend.
+    """
+    def half(path):
+        out = []
+        for i in range(len(path) - 1):
+            d = (path[i + 1] - path[i]).normalized()
+            left = Vector((-d.y, d.x))
+            if i == 0:
+                out.append(path[0] + left * w)
+                continue
+            d0 = (path[i] - path[i - 1]).normalized()
+            left0 = Vector((-d0.y, d0.x))
+            if d0.x * d.y - d0.y * d.x < 0.0:          # turning right: this side is the outside
+                a0, a1 = math.atan2(left0.y, left0.x), math.atan2(left.y, left.x)
+                if a1 > a0:
+                    a1 -= 2 * math.pi
+                for s in range(steps + 1):
+                    a = a0 + (a1 - a0) * s / steps
+                    out.append(path[i] + w * Vector((math.cos(a), math.sin(a))))
+            else:                                       # the inside of the bend: one mitred point
+                m = (left0 + left).normalized()
+                out.append(path[i] + m * (w / max(0.3, m.dot(left))))
+        d = (path[-1] - path[-2]).normalized()
+        a0 = math.atan2(d.x, -d.y)
+        for s in range(2 * steps):
+            a = a0 - math.pi * s / (2 * steps)
+            out.append(path[-1] + w * Vector((math.cos(a), math.sin(a))))
+        return out
+    path = [Vector(p) for p in points]
+    return [tuple(p) for p in half(path) + half(path[::-1])]
+
+
+def engrave(name, text, size, loc, mat):
+    """Flat lettering lying on a plate, read from the front. `loc` is the middle of its baseline."""
+    curve = bpy.data.curves.new(name + "Text", "FONT")
+    curve.body = text
+    curve.size = size * S
+    curve.align_x = "CENTER"
+    curve.space_character = 1.18
+    if os.path.exists(ENGRAVING_FONT):
+        curve.font = bpy.data.fonts.load(ENGRAVING_FONT, check_existing=True)
+    scratch = bpy.data.objects.new(name + "Text", curve)
+    bpy.context.scene.collection.objects.link(scratch)
+    bpy.context.view_layer.update()
+    mesh = bpy.data.meshes.new_from_object(scratch.evaluated_get(bpy.context.evaluated_depsgraph_get()))
+    bpy.data.objects.remove(scratch)
+    mesh.name = name
+    mesh.materials.clear()
+    mesh.materials.append(mat)
+    ob = bpy.data.objects.new(name, mesh)
+    bpy.context.scene.collection.objects.link(ob)
+    ob.location = Vector(loc) * S
+    return ob
+
+
+def flush_screw(name, x, y, z, slot):
+    """A countersunk brass screw, its head just proud of the plate, its slot dark."""
+    r = 2.7
+    lathe(name, [(0, z), (r, z), (r, z + 0.1), (r - 0.35, z + 0.3), (0, z + 0.3)], BRASS, segs=32, closed=True, loc=(x, y, 0.0))
+    c, s = math.cos(math.radians(slot)), math.sin(math.radians(slot))
+    strip = [(c * u - s * v, s * u + c * v) for u, v in ((-0.9 * r, -0.3), (0.9 * r, -0.3), (0.9 * r, 0.3), (-0.9 * r, 0.3))]
+    solid(name + "Slot", [extruded(strip, z + 0.29, z + 0.33)], ENGRAVE, loc=(x, y, 0.0), smooth=None)
+
+
+def ball_pillar(name, x, y, z_ball, z_top):
+    """A turned pillar on the movement plate: socket, taper, the ball that holds a pivot, and a neck."""
+    z0, sock = MECH_TOP, 16.0
+    prof = [(0, z0), (5.5, z0), (5.5, z0 + sock - 0.8), (5.0, z0 + sock), (4.3, z0 + sock + 0.3)]
+    prof += ball_pts(z_ball, BALL_R, 2.7, 3.0)
+    prof += [(3.0, z_top), (0, z_top)]
+    return lathe(name, prof, BRASS, segs=40, closed=True, loc=(x, y, 0.0))
+
+
+def pivot_screw(name, x, y, z, out, long=True):
+    """The blackened screw that carries an arbor's point, entering a pillar's ball from outside.
+
+    `out` is +1 or -1: which way along Y the screw sticks out.
+    """
+    rot = (-90.0 * out, 0.0, 0.0)
+    start = BALL_R - 0.4
+    if not long:
+        slotted_head(name, 2.0, 1.5, BLACK, slot=25.0, loc=(x, y + out * start, z), rot=rot)
+        return
+    thread = [(1.5 if i % 2 == 0 else 1.15, start + 0.3 * i) for i in range(10)]
+    lathe(name + "Thread", [(0, start)] + thread + [(0, start + 2.8)], BLACK, segs=20, closed=True, loc=(x, y, z), rot=rot)
+    slotted_head(name, 2.0, 3.4, BLACK, slot=25.0, loc=(x, y + out * (start + 2.7), z), rot=rot)
+
+
+def swing(v, angle):
+    """Turn an (x, z) offset about +Y, the way every arbor here turns."""
+    return (v[0] * math.cos(angle) + v[1] * math.sin(angle), -v[0] * math.sin(angle) + v[1] * math.cos(angle))
+
+
+def lever_angle(pen_angle):
+    """The top lever's turn for a turn of the pen arbor: the link between them keeps its length.
+
+    scene.ts poses the page by the same rule.
+    """
+    crank = swing(CRANK_PIN, pen_angle)
+    vx, vz = PIVOT[0] + crank[0] - TOP_ARBOR[0], PIVOT[2] + crank[1] - TOP_ARBOR[1]
+    reach, span = math.hypot(*LEVER_PIN), math.hypot(vx, vz)
+    spread = math.acos((reach ** 2 + span ** 2 - LINK ** 2) / (2.0 * reach * span))
+    base = math.atan2(LEVER_PIN[1], LEVER_PIN[0]) - math.atan2(vz, vx)
+    return min((base - spread, base + spread), key=abs)
+
+
 # ---- Scene -----------------------------------------------------------------
 bpy.ops.wm.read_factory_settings(use_empty=True)
 scene = bpy.context.scene
@@ -514,6 +732,19 @@ PAPER = make_printed("ChartPaper", os.path.join(TEX, "chart_placeholder.png"), 0
 DIAL = make_printed("DialFace", os.path.join(TEX, "dial.png"), 0.55, specular=0.3)
 FELT = make_felt("Felt")
 INK = make_plain("Ink", (0.03, 0.025, 0.20), 0.3)
+BRASS_SATIN = make_metal("BrassSatin", (0.80, 0.55, 0.20), 0.30, vary=0.05, scale=40.0)
+BLACK = make_metal("BlackSteel", (0.09, 0.09, 0.10), 0.34)
+METALS = (BRASS, BRASS_BRIGHT, BRASS_SATIN, NICKEL, STEEL, BLUED, BLACK)
+ENGRAVE = make_plain("Engraving", (0.015, 0.012, 0.010), 0.7)
+EBONITE = make_plain("Ebonite", (0.012, 0.012, 0.014), 0.25)
+INK_GLASS = make_plain("InkGlass", (0.012, 0.012, 0.035), 0.03)
+# The page cannot show clear glass inside the case, so the thermometer is an
+# enamel-backed tube (opaque white) and the ink bottle is full to the neck.
+THERMO_WHITE, THERMO_RED = (0.80, 0.78, 0.70), (0.45, 0.012, 0.02)       # scene.ts must agree
+THERMO_GLASS = make_plain("ThermoGlass", THERMO_WHITE, 0.08)
+THERMO_SPIRIT = make_plain("ThermoSpirit", THERMO_RED, 0.06)
+thermo_deg = 90.0 - (THERMO_F0_DEG + (THERMO_F140_DEG - THERMO_F0_DEG) * ARGS.temp / 140.0)
+THERMO_TUBE = make_thermo("ThermoTube", (thermo_deg - THERMO_SWEEP[0]) / (THERMO_SWEEP[1] - THERMO_SWEEP[0]))
 
 # Table.
 new_object("Table", [(-TABLE_HALF, -TABLE_HALF, 0), (TABLE_HALF, -TABLE_HALF, 0), (TABLE_HALF, TABLE_HALF, 0),
@@ -561,9 +792,15 @@ glass_pane("GlassLeft", open_d + 4, open_h + 4, (-HOOD_HX + set_in, 0, mid_z), (
 glass_pane("GlassRight", open_d + 4, open_h + 4, (HOOD_HX - set_in, 0, mid_z), (0, 1, 0), (0, 0, 1), GLASS)
 glass_pane("GlassTop", open_w + 4, open_d + 4, (0, 0, HOOD_Z1 - set_in), (1, 0, 0), (0, 1, 0), GLASS)
 
-# Bed plate.
-plate = board("BedPlate", (0.0, 0.0, PLATE_TOP - 3.0), (264.0, 136.0, 6.0), "x", BRASS_BRIGHT, bevel=1.0)
-plate.data.uv_layers.remove(plate.data.uv_layers[0])
+# Bed plate: the polished floor of the case. On it, the satin plate that carries the movement.
+box("BedPlate", (0.0, 0.0, PLATE_TOP - 3.0), (264.0, 136.0, 6.0), BRASS_BRIGHT, bevel=1.0)
+box("MechPlate", ((MECH_X[0] + MECH_X[1]) / 2.0, (MECH_Y[0] + MECH_Y[1]) / 2.0, (PLATE_TOP + MECH_TOP) / 2.0),
+    (MECH_X[1] - MECH_X[0], MECH_Y[1] - MECH_Y[0], MECH_TOP - PLATE_TOP), BRASS_SATIN, bevel=0.6)
+for n, (x, y, turn) in enumerate(((-24.0, -57.0, 20.0), (114.0, -57.0, 75.0), (114.0, 53.0, 140.0), (45.0, 53.5, 5.0),
+                                  (-25.0, 54.0, 100.0))):
+    flush_screw(f"PlateScrew{n}", x, y, MECH_TOP, turn)
+engrave("EngravedName", "MOUNT SOLEDAD", 3.4, (DIAL_C[0], -58.6, MECH_TOP + 0.04), ENGRAVE)
+engrave("EngravedPlace", "LA JOLLA", 2.6, (DIAL_C[0], -62.5, MECH_TOP + 0.04), ENGRAVE)
 
 # Drum: turns about its own Z. Chart U runs with time, anticlockwise seen from above.
 drum = empty("Drum", (DRUM_X, DRUM_Y, 0.0))
@@ -573,23 +810,34 @@ lathe("DrumBody", [(0, PAPER_Z0 - 2.0), (DRUM_R - 0.4, PAPER_Z0 - 2.0), (DRUM_R 
       BRASS, closed=True, parent=drum)
 lathe("DrumFlange", [(0, PAPER_Z0 - 3.5), (DRUM_R + 2.0, PAPER_Z0 - 3.5), (DRUM_R + 2.0, PAPER_Z0 - 0.6),
                      (DRUM_R + 1.2, PAPER_Z0), (0, PAPER_Z0)], BRASS, closed=True, parent=drum)
-lid_z = paper_top - 0.5
-lathe("DrumLid", [(0, lid_z), (DRUM_R + 1.5, lid_z), (DRUM_R + 1.5, lid_z + 3.6), (DRUM_R + 0.7, lid_z + 4.4),
-                  (DRUM_R - 3.0, lid_z + 4.4), (DRUM_R - 3.6, lid_z + 3.2), (12.0, lid_z + 3.2), (11.0, lid_z + 6.0),
-                  (6.5, lid_z + 6.6), (6.5, lid_z + 9.0), (9.0, lid_z + 9.4), (9.0, lid_z + 14.4), (7.6, lid_z + 15.6),
-                  (0, lid_z + 15.6)], BRASS, closed=True, parent=drum)
+# The lid: a rolled rim, a shallow dome, and the knurled nut that holds it down.
+lid_z, rim = paper_top - 0.5, DRUM_R + 2.2
+dome_r = rim - 4.2
+lid = [(0, lid_z), (rim - 0.6, lid_z), (rim, lid_z + 0.6), (rim, lid_z + 2.6), (rim - 0.5, lid_z + 3.4),
+       (rim - 1.6, lid_z + 3.8), (rim - 3.0, lid_z + 3.4)]
+lid += [(dome_r * (1.0 - i / 16.0), lid_z + 3.0 + 4.0 * (1.0 - (1.0 - i / 16.0) ** 2)) for i in range(17)]
+lathe("DrumLid", lid, BRASS, closed=True, parent=drum)
+nut_z = lid_z + 6.8
+lathe("DrumNut", [(0, nut_z), (5.4, nut_z), (5.4, nut_z + 1.2), (4.2, nut_z + 1.8), (2.6, nut_z + 2.4), (2.6, nut_z + 4.6),
+                  (5.6, nut_z + 5.2), (5.6, nut_z + 9.0), (5.0, nut_z + 9.9), (2.5, nut_z + 10.5), (0, nut_z + 10.7)],
+      BRASS, segs=48, closed=True, parent=drum)
+knurled("DrumNutRim", 7.0, nut_z + 5.4, nut_z + 9.0, BRASS, teeth=40, parent=drum)
 lathe("ChartPaper", [(PAPER_R, PAPER_Z0), (PAPER_R, paper_top)], PAPER, segs=128, uv="cyl", parent=drum, smooth=60.0)
-prism("PaperClip", [(-2.0, PAPER_Z0 - 1.0), (2.0, PAPER_Z0 - 1.0), (2.0, paper_top + 0.5), (-2.0, paper_top + 0.5)], 1.1,
-      BRASS, (PAPER_R + 1.2, 0.0, 0.0), (0, 1, 0), (0, 0, 1), parent=drum, bevel=0.25)
-lathe("DrumGear", [(0, PLATE_TOP + 2.5), (31.0, PLATE_TOP + 2.5), (31.0, PLATE_TOP + 4.5), (0, PLATE_TOP + 4.5)],
-      BRASS, segs=120, closed=True, parent=drum)
+# The clip that holds the chart's two ends, at the seam. It goes round with the
+# paper on the page.
+clip = empty("ChartClip", (0.0, 0.0, 0.0), parent=drum)
+prism("ClipBar", [(-2.0, PAPER_Z0), (2.0, PAPER_Z0), (2.0, lid_z), (-2.0, lid_z)], 1.0, BRASS,
+      (PAPER_R + 0.25, 0.0, 0.0), (0, 1, 0), (0, 0, 1), parent=clip, bevel=0.25)
+turned("ClipKnob", [(0, 0.0), (1.2, 0.0), (1.2, 2.2)] + ball_pts(4.6, 2.4, 1.2, 0.0), BRASS, "x",
+       loc=(PAPER_R + 0.6, 0.0, lid_z - 3.0), segs=24, parent=clip)
+knurled("DrumGear", 31.0, PLATE_TOP + 2.5, PLATE_TOP + 4.5, BRASS, teeth=96, depth=0.9, parent=drum)
 lathe("DrumSpindle", [(0, PLATE_TOP), (5.0, PLATE_TOP), (5.0, PAPER_Z0 - 3.0), (0, PAPER_Z0 - 3.0)], BRASS, segs=32,
       closed=True, parent=drum)
 
 # Aneroid stack: seven sealed capsules joined at their centres.
-stack_z0, pitch, cap_r, boss_r, count = 120.0, 7.2, 27.0, 5.0, 7
-lathe("StackPedestal", [(0, PLATE_TOP), (17.0, PLATE_TOP), (17.0, PLATE_TOP + 2.0), (9.0, PLATE_TOP + 4.0), (9.0, stack_z0),
-                        (0, stack_z0)], BRASS, segs=64, closed=True, loc=(STACK_XY[0], STACK_XY[1], 0.0))
+stack_z0, pitch, cap_r, boss_r, count = MECH_TOP + 3.0, 6.6, 27.0, 5.0, 7
+lathe("StackPedestal", [(0, MECH_TOP), (11.0, MECH_TOP), (11.0, MECH_TOP + 1.2), (7.0, MECH_TOP + 2.0), (7.0, stack_z0),
+                        (0, stack_z0)], BRASS, segs=48, closed=True, loc=(STACK_XY[0], STACK_XY[1], 0.0))
 stack = [(0.0, stack_z0)]
 for c in range(count):
     zc = stack_z0 + pitch * (c + 0.5)
@@ -606,29 +854,137 @@ for c in range(count):
 stack_top = stack_z0 + pitch * count
 stack.append((0.0, stack_top))
 lathe("AneroidStack", stack, NICKEL, segs=96, closed=True, loc=(STACK_XY[0], STACK_XY[1], 0.0), smooth=50.0)
+lathe("StackBoss", [(0, stack_top - 1.2), (4.6, stack_top - 1.2), (4.6, stack_top + 0.6), (2.4, stack_top + 1.2),
+                    (2.4, stack_top + 2.0), (0, stack_top + 2.0)], BRASS, segs=32, closed=True,
+      loc=(STACK_XY[0], STACK_XY[1], 0.0))
 
-# Linkage (schematic for now): stack -> lever -> arbor -> pen arm.
+# ---- The movement ------------------------------------------------------------
+# Rising pressure squeezes the stack, which pulls the short end of the top lever
+# down; the long end rises and lifts the link, the link lifts the crank on the
+# pen arbor, and the pen rises. The page poses TopLever, Link, StackPost,
+# PenArbor and PenArm by the same rule, finding the pins by name.
 dz = (ARGS.pressure - 29.5) / 3.0 * CHART_GRID
 pen_angle = math.asin(dz / PEN_ARM)
-link_top = (STACK_XY[0], STACK_XY[1], stack_top + 9.0)
-rod("StackLink", (STACK_XY[0], STACK_XY[1], stack_top), link_top, 1.3, STEEL, segs=16)
-rod("Lever", link_top, (PIVOT[0], STACK_XY[1], PIVOT[2]), 1.5, BRASS, segs=16)
-rod("Arbor", (PIVOT[0], PIVOT[1] - 3.0, PIVOT[2]), (PIVOT[0], 46.0, PIVOT[2]), 2.0, STEEL, segs=24)
-for y in (-22.0, 42.0):
-    lathe(f"ArborPillar_{int(y)}", pillar_profile(PLATE_TOP, PIVOT[2] + 6.0), BRASS, segs=48, closed=True, loc=(PIVOT[0], y, 0.0))
+top_angle = lever_angle(pen_angle)
 
-arm = empty("PenArm", PIVOT, rot=(0.0, math.degrees(pen_angle), 0.0))
-new_object("PenArmBlade",
-           [(0, -0.35, -3.6), (0, 0.35, -3.6), (0, 0.35, 3.6), (0, -0.35, 3.6),
-            (-PEN_ARM, -0.3, -1.1), (-PEN_ARM, 0.3, -1.1), (-PEN_ARM, 0.3, 1.1), (-PEN_ARM, -0.3, 1.1)],
-           [(0, 1, 2, 3), (4, 7, 6, 5), (0, 4, 5, 1), (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 4, 0)],
-           None, STEEL, parent=arm, closed=True, smooth=None)
-new_object("PenNib",
-           [(-PEN_ARM - 2.2, 0.3, -1.3), (-PEN_ARM + 3.5, 0.3, -1.3), (-PEN_ARM + 3.5, 0.3, 1.3), (-PEN_ARM - 2.2, 0.3, 1.3),
-            (-PEN_ARM, 3.4, 0.0)],
-           [(0, 3, 2, 1), (0, 1, 4), (1, 2, 4), (2, 3, 4), (3, 0, 4)], None, INK, parent=arm, closed=True, smooth=None)
-lathe("PenHub", [(0, -2.4), (4.2, -2.4), (4.2, 2.4), (0, 2.4)], BRASS, segs=32, closed=True, parent=arm, rot=(90, 0, 0))
-rod("PenLifter", (-24.0, -40.0, PLATE_TOP), (-24.0, -40.0, 214.0), 1.2, STEEL, segs=16)
+tall_top, low_top = TOP_ARBOR[1] + 9.5, PIVOT[2] + 9.5
+for label, x, z, ys, top in (("Tall", TOP_ARBOR[0], TOP_ARBOR[1], TALL_Y, tall_top), ("Low", PIVOT[0], PIVOT[2], LOW_Y, low_top)):
+    for n, y in enumerate(ys):
+        ball_pillar(f"{label}Pillar{n}", x, y, z, top)
+        slotted_head(f"{label}BarScrew{n}", 2.6, 2.2, BLACK, slot=35.0 + 70.0 * n, loc=(x, y, top + 4.5))
+    box(f"{label}Bar", (x, (ys[0] + ys[1]) / 2.0, top + 2.25), (9.0, ys[1] - ys[0] + 13.0, 4.5), BRASS, bevel=0.35)
+pivot_screw("TallPivot0", TOP_ARBOR[0], TALL_Y[0], TOP_ARBOR[1], -1)
+pivot_screw("TallPivot1", TOP_ARBOR[0], TALL_Y[1], TOP_ARBOR[1], 1)
+pivot_screw("LowPivot0", PIVOT[0], LOW_Y[0], PIVOT[2], -1, long=False)   # the dial stands close in front of it
+pivot_screw("LowPivot1", PIVOT[0], LOW_Y[1], PIVOT[2], 1)
+
+
+def arbor(name, y0, y1, parent, cone0=5.0, cone1=5.0):
+    """A steel arbor along Y, running on a point at each end."""
+    return turned(name, [(0, y0), (0.25, y0), (1.5, y0 + cone0), (1.5, y1 - cone1), (0.25, y1), (0, y1)], STEEL, "y",
+                  segs=20, parent=parent)
+
+
+# Top lever: its arbor, the boss on it, the long turned arm to the link and the short arm to the stack.
+lever = empty("TopLever", (TOP_ARBOR[0], LEVER_Y, TOP_ARBOR[1]), rot=(0.0, math.degrees(top_angle), 0.0))
+tip = BALL_R - 1.3                     # an arbor's point reaches this far short of the ball's centre
+arbor("TopArbor", TALL_Y[0] + tip - LEVER_Y, TALL_Y[1] - tip - LEVER_Y, lever)
+turned("LeverBoss", [(0, -4.6), (3.4, -4.6), (4.3, -3.9), (4.3, 3.9), (3.4, 4.6), (0, 4.6)], BRASS, "y", parent=lever)
+fork = LEVER_PIN[0] - 4.5              # where the slotted end begins
+long_arm = [(0, 3.0), (2.5, 3.0), (2.5, 22.0), (3.3, 22.4), (3.3, 23.6), (2.8, 24.2)]
+long_arm += ball_pts(29.5, 4.6, 2.8, 2.8) + [(2.8, 34.8), (3.3, 35.4), (3.3, 36.6), (2.7, 37.0), (2.7, fork), (0, fork)]
+turned("LeverArm", long_arm, BRASS, "x", parent=lever)
+gap = math.asin(0.55 / 2.7)
+cheeks = []
+for side in (0.0, math.pi):
+    angles = [side + gap + (math.pi - 2 * gap) * i / 12 for i in range(13)]
+    cheeks.append(extruded([(2.7 * math.cos(a), 2.7 * math.sin(a)) for a in angles], 0.0, 7.7))
+solid("LeverFork", cheeks, BRASS, loc=(fork, 0.0, 0.0), rot=(0, 90, 0), parent=lever)
+rod("LeverPinRod", (LEVER_PIN[0], -3.0, LEVER_PIN[1]), (LEVER_PIN[0], 3.0, LEVER_PIN[1]), 0.55, STEEL, segs=12, parent=lever)
+turned("LeverShortArm", [(0, 3.0), (1.5, 3.0), (1.5, 8.0), (2.1, 8.3), (2.1, 9.5), (1.5, 9.8),
+                         (1.5, -STACK_PIN[0] + 1.6), (0, -STACK_PIN[0] + 2.0)], BRASS, "-x", segs=20, parent=lever)
+empty("LeverPin", (LEVER_PIN[0], 0.0, LEVER_PIN[1]), parent=lever)
+empty("StackPin", (STACK_PIN[0], 0.0, STACK_PIN[1]), parent=lever)
+
+# The post on top of the stack, and the wire and yoke that hang it from the short arm.
+post = empty("StackPost", (STACK_XY[0], STACK_XY[1], stack_top + swing(STACK_PIN, top_angle)[1]))
+rise = TOP_ARBOR[1] - stack_top
+lathe("PostStem", [(0, -2.5), (1.0, -2.5), (1.0, 2.6), (2.2, 2.6), (2.2, 3.2), (1.0, 3.2), (1.0, 7.2), (2.2, 7.2), (2.2, 7.8),
+                   (1.0, 7.8), (1.0, rise - 6.5), (0.45, rise - 6.1), (0.45, rise - 1.6), (0, rise - 1.6)], STEEL, segs=16,
+      closed=True, parent=post)
+knurled("PostNut", 2.8, 3.2, 7.2, BRASS, teeth=18, depth=0.35, parent=post)
+box("PostYoke", (0.0, 0.0, rise), (3.2, 4.4, 4.4), BRASS, bevel=0.3, parent=post)
+
+# Pen arbor: everything that turns with the pen. PenArm, inside it, is the part the lifter swings off the paper.
+pen_arbor = empty("PenArbor", PIVOT, rot=(0.0, math.degrees(pen_angle), 0.0))
+arm = empty("PenArm", (0.0, 0.0, 0.0), parent=pen_arbor)
+crank_y = LEVER_Y - PIVOT[1]           # the crank and the link work in the top lever's plane
+arbor("PenArborRod", LOW_Y[0] + tip - PIVOT[1], LOW_Y[1] - tip - PIVOT[1], pen_arbor, cone0=3.0)
+turned("PenNut", [(0, -1.7), (2.2, -1.7), (2.8, -1.3), (2.8, 0.3), (0, 0.3)], BRASS, "y", segs=24, parent=pen_arbor)
+prism("PenCarrier", [(-21.0, -2.2), (-8.0, -3.4), (8.0, -3.4), (17.0, -2.2), (17.0, 2.2), (8.0, 3.4), (-8.0, 3.4), (-21.0, 2.2)],
+      1.2, BRASS, (0.0, 1.5, 0.0), (1, 0, 0), (0, 0, 1), parent=pen_arbor, smooth=None, bevel=0.2)
+turned("PenHub", [(0, 1.5), (4.4, 1.5), (4.4, 4.2), (3.6, 4.8), (2.4, 12.0), (0, 12.0)], BRASS, "y", parent=pen_arbor)
+slotted_head("PenTailScrew", 1.7, 1.4, BLACK, slot=60.0, loc=(12.5, 0.3, 0.0), rot=(90, 0, 0), parent=pen_arbor)
+turned("CrankBoss", [(0, crank_y - 4.3)] + ball_pts(crank_y, 4.3, 1.5, 1.5, steps=14) + [(0, crank_y + 4.3)], BRASS, "y",
+       parent=pen_arbor)
+prism("CrankArm", strap([(0.0, 0.0), CRANK_PIN], 1.9), 2.0, BRASS, (0.0, crank_y - 0.4, 0.0), (1, 0, 0), (0, 0, 1),
+      parent=pen_arbor, smooth=40.0, bevel=0.25)
+rod("CrankPinRod", (CRANK_PIN[0], crank_y - 2.8, CRANK_PIN[1]), (CRANK_PIN[0], crank_y + 0.9, CRANK_PIN[1]), 0.55, STEEL,
+    segs=12, parent=pen_arbor)
+empty("CrankPin", (CRANK_PIN[0], crank_y, CRANK_PIN[1]), parent=pen_arbor)
+
+# The pen: a thin steel blade, and at its end a little trough of ink whose point writes.
+blade_end = -PEN_ARM + 7.0
+prism("PenArmBlade", [(-9.0, -3.2), (-9.0, 3.2), (blade_end, 1.15), (blade_end, -1.15)], 0.5, STEEL, (0.0, 0.25, 0.0),
+      (1, 0, 0), (0, 0, 1), parent=arm, smooth=None)
+slotted_head("PenBladeScrew", 1.9, 1.3, BRASS, slot=15.0, loc=(-15.0, -0.25, 0.0), rot=(90, 0, 0), parent=arm)
+box("PenSleeve", (blade_end + 1.5, 0.0, 0.0), (3.0, 1.1, 2.9), STEEL, bevel=0.15, parent=arm)
+nib_a, nib_b = (-PEN_ARM - 2.2, 0.25, 1.7), (blade_end, 0.25, 1.7)
+nib_tip, nib_keel = (-PEN_ARM, 3.4, 0.0), (-PEN_ARM + 2.4, 0.25, -1.9)
+new_object("PenNib", [nib_a, nib_b, nib_tip, nib_keel], [(0, 1, 2), (0, 3, 1), (0, 2, 3), (3, 2, 1)], None, STEEL,
+           parent=arm, closed=True, smooth=None)
+ink_mid = [(nib_a[k] + nib_b[k] + nib_tip[k]) / 3.0 for k in range(3)]
+new_object("PenInk", [tuple(ink_mid[k] + 0.8 * (p[k] - ink_mid[k]) + (0.06 if k == 2 else 0.0) for k in range(3))
+                      for p in (nib_a, nib_b, nib_tip)], [(0, 1, 2)], None, INK, parent=arm, smooth=None)
+
+# The link between the top lever's slotted end and the crank.
+lever_end, crank_end = swing(LEVER_PIN, top_angle), swing(CRANK_PIN, pen_angle)
+link_at = (TOP_ARBOR[0] + lever_end[0], LEVER_Y, TOP_ARBOR[1] + lever_end[1])
+link_dx, link_dz = PIVOT[0] + crank_end[0] - link_at[0], PIVOT[2] + crank_end[1] - link_at[2]
+link = empty("Link", link_at, rot=(0.0, math.degrees(math.atan2(-link_dx, -link_dz)), 0.0))
+prism("LinkStrip", strap([(0.0, 0.0), (0.0, -LINK)], 1.25), 0.5, BLUED, (0.0, 0.25, 0.0), (1, 0, 0), (0, 0, 1), parent=link,
+      smooth=40.0)
+
+# Pen lifter: a lever on the plate that swings about its stud, so the rod at its
+# end pushes the pen arm off the paper. The page swings it; here it is at rest.
+lifter = empty("PenLifter", (LIFTER[0], LIFTER[1], MECH_TOP))
+lift_rod, lift_knob = (-16.0, 7.5), (12.0, -7.0)
+lathe("LifterWasher", [(0, 0.0), (4.4, 0.0), (4.4, 0.8), (0, 0.8)], BRASS, segs=32, closed=True, parent=lifter)
+prism("LifterFoot", strap([lift_rod, (0.0, 0.0), lift_knob], 3.3), 2.2, BRASS, (0.0, 0.0, 0.8), (1, 0, 0), (0, 1, 0),
+      parent=lifter, smooth=40.0, bevel=0.3)
+slotted_head("LifterStud", 3.0, 1.8, BRASS, slot=70.0, loc=(0.0, 0.0, 3.0), parent=lifter)
+rod_top = 208.0 - MECH_TOP
+lathe("LifterRod", [(0, 3.0), (1.9, 3.0), (1.9, 4.0), (1.1, 4.6)] + ball_pts(rod_top, 1.7, 1.1, 0.0), BRASS, segs=20,
+      closed=True, loc=(lift_rod[0], lift_rod[1], 0.0), parent=lifter)
+lathe("LifterKnob", [(0, 3.0), (1.5, 3.0), (1.5, 5.4)] + ball_pts(8.0, 3.1, 1.5, 0.0), BRASS, segs=24, closed=True,
+      loc=(lift_knob[0], lift_knob[1], 0.0), parent=lifter)
+
+# The knurled knob that sets the stack's height, and so the pen's zero.
+kx, ky, kz = 112.0, 20.0, MECH_TOP
+lathe("ZeroKnob", [(0, kz), (4.0, kz), (4.0, kz + 1.0), (2.6, kz + 1.6), (2.6, kz + 5.0), (5.6, kz + 5.6), (5.6, kz + 9.6),
+                   (4.6, kz + 10.4), (1.2, kz + 11.0), (0, kz + 11.6)], BRASS, segs=40, closed=True, loc=(kx, ky, 0.0))
+knurled("ZeroKnobRim", 6.3, kz + 5.8, kz + 9.4, BRASS, teeth=36, loc=(kx, ky, 0.0))
+
+# Ink well: a bottle of ink in a brass cup, with its stopper and dropper knob.
+ix, iy, iz = INK_WELL[0], INK_WELL[1], MECH_TOP
+lathe("InkCup", [(0, iz), (9.5, iz), (9.5, iz + 1.2), (8.2, iz + 1.9), (7.5, iz + 2.8), (7.5, iz + 31.0), (7.9, iz + 31.3),
+                 (7.9, iz + 32.0), (6.6, iz + 32.0), (0, iz + 32.0)], BRASS, segs=48, closed=True, loc=(ix, iy, 0.0))
+lathe("InkBottle", [(0, iz + 31.5), (6.5, iz + 31.5), (6.5, iz + 37.0), (5.6, iz + 39.2), (4.0, iz + 40.4), (4.0, iz + 45.0),
+                    (4.9, iz + 45.4), (4.9, iz + 46.6), (0, iz + 46.6)], INK_GLASS, segs=40, closed=True, loc=(ix, iy, 0.0))
+lathe("InkStopper", [(0, iz + 46.4), (3.3, iz + 46.4), (3.8, iz + 48.0), (3.8, iz + 51.0), (2.2, iz + 53.0), (0, iz + 53.0)],
+      EBONITE, segs=32, closed=True, loc=(ix, iy, 0.0))
+lathe("InkKnob", [(0, iz + 52.8), (1.3, iz + 52.8), (1.3, iz + 57.5)] + ball_pts(iz + 60.5, 3.0, 1.3, 0.0), BRASS, segs=24,
+      closed=True, loc=(ix, iy, 0.0))
 
 # Dial: local X right, Y up, Z toward the viewer.
 dial = empty("Dial", DIAL_C, rot=(90, 0, 0))
@@ -652,19 +1008,32 @@ prism("BridgeCross", [(-21.0, -3.6), (21.0, -3.6), (21.0, 3.6), (-21.0, 3.6)], 2
 for label, cx, cy, r in (("Hub", 0, 0, 8.5), ("N", 0, 32, 6.5), ("S", 0, -32, 6.5), ("E", 21, 0, 5.5), ("W", -21, 0, 5.5)):
     prism(f"BridgeBoss{label}", disc_pts(cx, cy, r), 3.0, BRASS, (0, 0, bz), (1, 0, 0), (0, 1, 0), parent=dial, smooth=40.0, bevel=0.4)
 for dx in (-33.0, 33.0):
-    lathe(f"DialPillar_{int(dx)}", pillar_profile(PLATE_TOP, DIAL_C[2] + 30.0, r=3.0), BRASS, segs=48, closed=True,
+    lathe(f"DialPillar_{int(dx)}", pillar_profile(MECH_TOP, DIAL_C[2] + 30.0, r=3.0), BRASS, segs=48, closed=True,
           loc=(DIAL_C[0] + dx, DIAL_C[1] + 9.0, 0.0))
     rod(f"DialStud_{int(dx)}", (DIAL_C[0] + dx, DIAL_C[1] + 9.0, DIAL_C[2] + 22.0), (DIAL_C[0] + dx, DIAL_C[1], DIAL_C[2] + 22.0),
         1.6, BRASS, segs=16)
 
-# Thermometer tube along the bottom of the dial.
+# Thermometer along the bottom of the dial: an enamel-backed tube with a red
+# spirit column. U runs along the tube from the bulb, and the page moves the
+# end of the column by sliding a two-colour texture along it.
 tube_r, tube_w = 0.80 * DIAL_R, 1.5
 lathe("ThermoTube", [(tube_r + tube_w * math.cos(math.radians(t)), 1.2 + tube_w + tube_w * math.sin(math.radians(t)))
-                     for t in range(0, 361, 30)], NICKEL, segs=64, sweep=(-150.0, -30.0), parent=dial, smooth=60.0)
-bulb_a = math.radians(-150.0)
-lathe("ThermoBulb", [(0, -2.6)] + [(2.6 * math.cos(math.radians(t)), 2.6 * math.sin(math.radians(t))) for t in range(-60, 61, 30)]
-      + [(0, 2.6)], NICKEL, segs=24, closed=True, parent=dial,
-      loc=(tube_r * math.cos(bulb_a), tube_r * math.sin(bulb_a), 1.2 + tube_w), smooth=60.0)
+                     for t in range(0, 361, 30)], THERMO_TUBE, segs=96, sweep=THERMO_SWEEP, uv="cyl", parent=dial, smooth=60.0)
+for label, deg, mat, r in (("Bulb", THERMO_SWEEP[0], THERMO_SPIRIT, 2.7), ("Tip", THERMO_SWEEP[1], THERMO_GLASS, tube_w)):
+    a = math.radians(deg)
+    lathe("Thermo" + label, [(0, -r)] + [(r * math.cos(math.radians(t)), r * math.sin(math.radians(t))) for t in range(-60, 61, 30)]
+          + [(0, r)], mat, segs=24, closed=True, parent=dial, loc=(tube_r * math.cos(a), tube_r * math.sin(a), 1.2 + tube_w),
+          smooth=60.0)
+
+# What the page moves must leave nothing behind in the bake: no shadow on the
+# paper where the pen was, no dark patch on the plate where the lifter stood.
+MOVING = ("ChartClip", "PenArbor", "TopLever", "Link", "StackPost", "PenLifter")
+for ob in scene.objects:
+    node = ob
+    while node is not None and node.name not in MOVING:
+        node = node.parent
+    if node is not None:
+        ob.visible_shadow = False
 
 # ---- Lighting and camera -----------------------------------------------------
 world = bpy.data.worlds.new("Studio")
@@ -742,13 +1111,22 @@ scene.collection.objects.link(cam)
 scene.camera = cam
 VIEWS = {"hero": (16.0, 10.0, 1750.0, 85.0, (0.0, 0.0, 118.0)),
          "front": (0.0, 9.0, 1150.0, 80.0, (0.0, 0.0, 132.0)),
-         "right": (-58.0, 12.0, 1500.0, 85.0, (40.0, 0.0, 70.0))}
+         "right": (-58.0, 12.0, 1500.0, 85.0, (40.0, 0.0, 70.0)),
+         "mech": (-35.0, 22.0, 520.0, 50.0, (50.0, -5.0, 158.0)),
+         "mech_left": (35.0, 28.0, 520.0, 50.0, (25.0, 0.0, 158.0)),
+         "mech_back": (150.0, 25.0, 520.0, 50.0, (45.0, 0.0, 158.0)),
+         "mech_top": (0.0, 80.0, 600.0, 50.0, (30.0, 0.0, 140.0))}
 yaw, elev, dist, lens, target = VIEWS[ARGS.view]
 cam_data.lens = lens
 yaw_r, elev_r = math.radians(yaw), math.radians(elev)
 cam.location = (Vector(target) + dist * Vector((-math.sin(yaw_r) * math.cos(elev_r), -math.cos(yaw_r) * math.cos(elev_r),
                                                 math.sin(elev_r)))) * S
 aim(cam, target)
+
+if ARGS.bare:
+    for ob in scene.objects:
+        if ob.name.startswith(("Glass", "Post_", "Rail")):
+            ob.hide_render = True
 
 # ---- Output ------------------------------------------------------------------
 width, height = (int(v) for v in ARGS.res.lower().split("x"))
@@ -809,7 +1187,8 @@ def bake_lighting(out_dir, size, samples):
     """Bake what a live renderer cannot work out: shadowed, bounced diffuse light.
 
     Everything but the glass and the table shares one atlas on a second UV set.
-    light.png holds the diffuse light arriving at each point (no surface colour),
+    light.png holds the diffuse light arriving at each point (no surface colour;
+    metal takes none, so its part of the atlas is left black),
     ao.png holds how enclosed each point is (for dimming reflections), and
     table.png holds the finished table, shadows and all.
     """
@@ -854,8 +1233,9 @@ def bake_lighting(out_dir, size, samples):
     margin = max(4, size // 256)
 
     light = bpy.data.images.new("light", size, size, alpha=False, float_buffer=True)
-    aim_materials(targets, light)
-    select(targets)
+    lit_targets = [ob for ob in targets if ob.data.materials[0] not in METALS]
+    aim_materials(lit_targets, light)
+    select(lit_targets)
     bpy.ops.object.bake(type="DIFFUSE", pass_filter={"DIRECT", "INDIRECT"}, margin=margin, use_clear=True, uv_layer="Light")
     lit = read_pixels(light, size)
     print("light map: max", float(lit.max()), "mean", float(lit.mean()))
@@ -863,6 +1243,7 @@ def bake_lighting(out_dir, size, samples):
 
     ao = bpy.data.images.new("ao", size, size, alpha=False, float_buffer=True, is_data=True)
     aim_materials(targets, ao)
+    select(targets)
     for pane in panes:
         pane.hide_render = True
     scene.world.light_settings.distance = 0.06

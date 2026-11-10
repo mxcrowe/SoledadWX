@@ -36,6 +36,7 @@ createBarograph(canvas, {
 }).then(
   (handle) => {
     window.barograph = handle;
+    handle.setTemperature(71);
     drum = createLiveDrum(handle, sheet, madeUpWeek, (s) => {
       document.title = `Barograph: ${s.live ? "now" : "back"} ${s.at.toISOString()} ${s.pressure?.toFixed(3)}`;
     });

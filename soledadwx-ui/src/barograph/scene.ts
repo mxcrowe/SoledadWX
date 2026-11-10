@@ -5,8 +5,9 @@
 // shadowed, bounced light once and bakes it; this file adds what has to be
 // live: reflections that follow the eye, and the moving parts.
 //
-// Names it relies on in the model: PenArm, Needle, Table. Materials are
-// matched by name.
+// Names it relies on in the model: Drum, ChartClip, PenArbor, PenArm, CrankPin,
+// TopLever, LeverPin, StackPin, Link, StackPost, PenLifter, Needle. Materials
+// are matched by name.
 
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
@@ -23,6 +24,14 @@ const PEN_ARM_M = 0.173;
 const CHART_GRID_M = 0.09; // SCALE.lo to SCALE.hi on the chart
 const CHART_AT_PEN_HOURS = 82; // the hour of the week under the pen in the model as built
 const PEN_LIFT_RAD = THREE.MathUtils.degToRad(4); // how far the lifter swings the pen off the paper
+const LIFTER_SWING_RAD = THREE.MathUtils.degToRad(31); // the turn of the lifter's foot that brings its rod that far
+// The dial thermometer, as in make_textures.py and build_barograph.py: where
+// 0 and 140 degrees F fall (clockwise from the top of the dial), the tube's
+// sweep from its bulb (anticlockwise from the dial's right), and its colours.
+const THERMO = { f0: 236, f140: 124, from: -150, to: -30 };
+const THERMO_WHITE = [0.8, 0.78, 0.7] as const;
+const THERMO_RED = [0.45, 0.012, 0.02] as const;
+const ROOM_F = 68; // shown until a reading arrives
 const PAPER_RADIUS_M = 0.0466;
 const DIAL_RAD_PER_INHG = THREE.MathUtils.degToRad(66);
 const LIGHT_SCALE = 2.5; // light.png stores light / LIGHT_SCALE
@@ -80,6 +89,56 @@ const BRASS_MIRROR = {
     }`,
 };
 
+/**
+ * The movement between the stack and the pen. The crank on the pen arbor pulls
+ * a link of fixed length, the link turns the top lever, and the lever's short
+ * end presses on the stack. build_barograph.py poses its stills by the same
+ * rule (lever_angle). Returns null if the model has no movement.
+ */
+function makeMovement(model: THREE.Object3D): ((swing: number) => void) | null {
+  const parts = ["PenArbor", "CrankPin", "TopLever", "LeverPin", "StackPin", "Link", "StackPost"].map((name) =>
+    model.getObjectByName(name),
+  );
+  if (parts.some((part) => !part)) return null;
+  const [penArbor, crankPin, lever, leverPin, stackPin, link, post] = parts as THREE.Object3D[];
+
+  model.updateMatrixWorld(true);
+  const a = leverPin.getWorldPosition(new THREE.Vector3());
+  const linkLength = a.distanceTo(crankPin.getWorldPosition(new THREE.Vector3()));
+  // The post stands on the stack and hangs from the lever's short end.
+  const postBelowPin = post.position.y - stackPin.getWorldPosition(a).y;
+  const reach = Math.hypot(leverPin.position.x, leverPin.position.y);
+  const leverRest = Math.atan2(leverPin.position.y, leverPin.position.x);
+
+  // In the plane the arbors turn in, x runs across and y up, and a turn about
+  // ARM_AXIS takes (x, y) to (x cos + y sin, y cos - x sin).
+  const turned = (v: THREE.Vector3, angle: number): [number, number] => [
+    v.x * Math.cos(angle) + v.y * Math.sin(angle),
+    v.y * Math.cos(angle) - v.x * Math.sin(angle),
+  ];
+
+  return (swing) => {
+    const [cx, cy] = turned(crankPin.position, swing);
+    const crankX = penArbor.position.x + cx;
+    const crankY = penArbor.position.y + cy;
+    const vx = crankX - lever.position.x;
+    const vy = crankY - lever.position.y;
+    const span = Math.hypot(vx, vy);
+    const cos = (reach * reach + span * span - linkLength * linkLength) / (2 * reach * span);
+    const spread = Math.acos(THREE.MathUtils.clamp(cos, -1, 1));
+    const base = leverRest - Math.atan2(vy, vx);
+    const leverTurn = Math.abs(base - spread) < Math.abs(base + spread) ? base - spread : base + spread;
+    lever.quaternion.setFromAxisAngle(ARM_AXIS, leverTurn);
+
+    const [lx, ly] = turned(leverPin.position, leverTurn);
+    link.position.x = lever.position.x + lx;
+    link.position.y = lever.position.y + ly;
+    // The link hangs down its own -Y from the lever's pin to the crank's.
+    link.quaternion.setFromAxisAngle(ARM_AXIS, Math.atan2(link.position.x - crankX, link.position.y - crankY));
+    post.position.y = lever.position.y + turned(stackPin.position, leverTurn)[1] + postBelowPin;
+  };
+}
+
 /** The studio lighting image as a backdrop, for the eyes that should see it. */
 function makeStudioBackdrop(env: THREE.Texture): THREE.Mesh {
   const material = new THREE.ShaderMaterial({
@@ -128,9 +187,11 @@ export interface BarographOptions {
 }
 
 export interface Barograph {
-  /** Pose the pen and the dial needle for a sea-level pressure in inHg. */
+  /** Pose the pen, the movement behind it and the dial needle for a sea-level pressure in inHg. */
   setPressure(inHg: number): void;
-  /** Turn the drum so this hour of the week (0 = Monday 00:00) is under the pen. */
+  /** Set the dial thermometer's spirit column, in degrees Fahrenheit. */
+  setTemperature(degF: number): void;
+  /** Turn the drum so this hour of the week (0 = Monday 00:00) is under the pen. Hours outside the week turn it on. */
   setPenTime(hoursIntoWeek: number): void;
   /** Lift the pen off the paper (true) or let it down (false). It swings there gently. */
   setPenLifted(lifted: boolean): void;
@@ -195,6 +256,24 @@ export async function createBarograph(canvas: HTMLCanvasElement, options: Barogr
   scene.environment = env;
   scene.environmentRotation.y = Math.PI;
 
+  // The thermometer's spirit column: red then white, slid along the tube.
+  const strip = new Uint8Array(8);
+  [THERMO_RED, THERMO_WHITE].forEach((rgb, i) => {
+    const c = linear(rgb[0], rgb[1], rgb[2]).convertLinearToSRGB();
+    strip.set([Math.round(c.r * 255), Math.round(c.g * 255), Math.round(c.b * 255), 255], i * 4);
+  });
+  const column = new THREE.DataTexture(strip, 2, 1, THREE.RGBAFormat);
+  column.colorSpace = THREE.SRGBColorSpace;
+  column.magFilter = column.minFilter = THREE.NearestFilter;
+  column.repeat.x = 0.5;
+  column.needsUpdate = true;
+  const showTemperature = (degF: number) => {
+    const deg = 90 - (THERMO.f0 + ((THERMO.f140 - THERMO.f0) * degF) / 140);
+    const level = THREE.MathUtils.clamp((deg - THERMO.from) / (THERMO.to - THERMO.from), 0.01, 1);
+    column.offset.x = 0.5 - 0.5 * level; // the red half covers the tube up to `level` of its length
+  };
+  showTemperature(ROOM_F);
+
   /** A surface whose diffuse light comes from the bake. */
   const baked = <T extends THREE.MeshStandardMaterial>(material: T, print = false): T => {
     material.lightMap = light;
@@ -210,8 +289,9 @@ export async function createBarograph(canvas: HTMLCanvasElement, options: Barogr
     return material;
   };
   // Metal in a crevice mirrors its bright neighbours, so occlusion dims it only a little.
-  const metal = (colour: THREE.Color, roughness: number) =>
-    new THREE.MeshStandardMaterial({ color: colour, metalness: 1, roughness, aoMap: occlusion, aoMapIntensity: 0.3 });
+  // Satin metal mirrors less sharply, so it is dimmed more.
+  const metal = (colour: THREE.Color, roughness: number, occluded = 0.3) =>
+    new THREE.MeshStandardMaterial({ color: colour, metalness: 1, roughness, aoMap: occlusion, aoMapIntensity: occluded });
   // Lacquered wood: the lacquer is the only layer that mirrors anything.
   const woodLook = {
     map: woodDiff,
@@ -228,7 +308,17 @@ export async function createBarograph(canvas: HTMLCanvasElement, options: Barogr
     ChartPaper: baked(new THREE.MeshStandardMaterial({ map: chart, roughness: 0.82 }), true),
     DialFace: baked(new THREE.MeshPhysicalMaterial({ map: dial, roughness: 0.55, specularIntensity: 0.6 }), true),
     Ink: baked(new THREE.MeshStandardMaterial({ color: linear(0.03, 0.025, 0.2), roughness: 0.3 })),
+    Engraving: baked(new THREE.MeshStandardMaterial({ color: linear(0.015, 0.012, 0.01), roughness: 0.7 })),
+    Ebonite: baked(new THREE.MeshStandardMaterial({ color: linear(0.012, 0.012, 0.014), roughness: 0.25 })),
+    // Clear glass cannot be drawn inside the case (it would vanish behind the
+    // panes), so the ink bottle is full and the thermometer tube is enamel-backed.
+    InkGlass: baked(new THREE.MeshStandardMaterial({ color: linear(0.012, 0.012, 0.035), roughness: 0.03 })),
+    ThermoGlass: baked(new THREE.MeshStandardMaterial({ color: linear(...THERMO_WHITE), roughness: 0.08 })),
+    ThermoSpirit: baked(new THREE.MeshStandardMaterial({ color: linear(...THERMO_RED), roughness: 0.06 })),
+    ThermoTube: baked(new THREE.MeshStandardMaterial({ map: column, roughness: 0.08 })),
     Brass: metal(linear(0.8, 0.53, 0.17), 0.16),
+    BrassSatin: metal(linear(0.8, 0.55, 0.2), 0.3, 0.7),
+    BlackSteel: metal(linear(0.09, 0.09, 0.1), 0.34),
     BrassPolished: metal(linear(0.82, 0.56, 0.19), 0.045),
     Nickel: metal(linear(0.72, 0.7, 0.66), 0.2),
     Steel: metal(linear(0.62, 0.63, 0.65), 0.14),
@@ -267,7 +357,7 @@ export async function createBarograph(canvas: HTMLCanvasElement, options: Barogr
   const pmrem = new THREE.PMREMGenerator(renderer);
   const interior = pmrem.fromCubemap(surroundings.texture);
   pmrem.dispose();
-  for (const name of ["Brass", "BrassPolished", "Nickel", "Steel", "BluedSteel"]) {
+  for (const name of ["Brass", "BrassPolished", "BrassSatin", "Nickel", "Steel", "BluedSteel", "BlackSteel"]) {
     (materials[name] as THREE.MeshStandardMaterial).envMap = interior.texture;
   }
 
@@ -306,18 +396,23 @@ export async function createBarograph(canvas: HTMLCanvasElement, options: Barogr
   controls.minAzimuthAngle = THREE.MathUtils.degToRad(-70);
   controls.maxAzimuthAngle = THREE.MathUtils.degToRad(70);
 
+  // The pen arbor swings with the pressure and takes the movement with it. The
+  // pen arm, inside it, is pushed off the paper by the lifter's rod.
+  const penArbor = model.getObjectByName("PenArbor");
   const penArm = model.getObjectByName("PenArm");
+  const lifter = model.getObjectByName("PenLifter");
   const needle = model.getObjectByName("Needle");
   const drum = model.getObjectByName("Drum");
+  const clip = model.getObjectByName("ChartClip");
+  const poseMovement = makeMovement(model);
   let penSwing = 0;
   let lift = 0;
   let liftTarget = 0;
-  const swingQ = new THREE.Quaternion();
-  const liftQ = new THREE.Quaternion();
   const poseArm = () => {
-    swingQ.setFromAxisAngle(ARM_AXIS, penSwing);
-    liftQ.setFromAxisAngle(UP, lift * PEN_LIFT_RAD);
-    penArm?.quaternion.multiplyQuaternions(liftQ, swingQ);
+    penArbor?.quaternion.setFromAxisAngle(ARM_AXIS, penSwing);
+    penArm?.quaternion.setFromAxisAngle(UP, lift * PEN_LIFT_RAD);
+    lifter?.quaternion.setFromAxisAngle(UP, lift * LIFTER_SWING_RAD);
+    poseMovement?.(penSwing);
   };
 
   let dirty = true;
@@ -450,8 +545,15 @@ export async function createBarograph(canvas: HTMLCanvasElement, options: Barogr
       needle?.quaternion.setFromAxisAngle(UP, -(inHg - 29.5) * DIAL_RAD_PER_INHG);
       invalidate();
     },
+    setTemperature(degF: number) {
+      showTemperature(degF);
+      invalidate();
+    },
     setPenTime(hoursIntoWeek: number) {
-      chart.offset.x = (hoursIntoWeek - CHART_AT_PEN_HOURS) / WEEK_HOURS;
+      const turns = (hoursIntoWeek - CHART_AT_PEN_HOURS) / WEEK_HOURS;
+      chart.offset.x = turns;
+      // The clip that holds the chart's ends goes round with the paper.
+      if (clip) clip.rotation.y = -turns * 2 * Math.PI;
       invalidate();
     },
     setPenLifted(lifted: boolean) {
@@ -471,7 +573,7 @@ export async function createBarograph(canvas: HTMLCanvasElement, options: Barogr
         if (mesh.isMesh) mesh.geometry.dispose();
       });
       for (const m of Object.values(materials)) m.dispose();
-      for (const t of [env, lut, woodDiff, woodNormal, dial, light, occlusion, cloth]) t.dispose();
+      for (const t of [env, lut, woodDiff, woodNormal, dial, light, occlusion, cloth, column]) t.dispose();
       view.dispose();
       surroundings.dispose();
       interior.dispose();

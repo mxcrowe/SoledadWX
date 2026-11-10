@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { DrumStatus, LiveDrum } from "./barograph/drum";
+import type { Barograph as BarographScene } from "./barograph/scene";
 
 interface SeriesPoint {
   t: number;
@@ -28,11 +29,14 @@ const WHEN = new Intl.DateTimeFormat(undefined, {
 
 /**
  * The Barograph page: the instrument drawn live, its chart inked from the
- * Archive. The 3D code loads only when this page is opened.
+ * Archive. The dial's thermometer shows `insideTemp` (degrees F), the room the
+ * instrument would stand in. The 3D code loads only when this page is opened.
  */
-export default function Barograph() {
+export default function Barograph({ insideTemp }: { insideTemp?: number }) {
   const holder = useRef<HTMLDivElement>(null);
   const drumRef = useRef<LiveDrum | null>(null);
+  const sceneRef = useRef<BarographScene | null>(null);
+  const tempRef = useRef(insideTemp);
   const [state, setState] = useState<"loading" | "ready" | string>("loading");
   const [status, setStatus] = useState<DrumStatus | null>(null);
 
@@ -53,8 +57,11 @@ export default function Barograph() {
         });
         drum = createLiveDrum(scene, sheet, fetchWeek, setStatus);
         drumRef.current = drum;
+        sceneRef.current = scene;
+        if (tempRef.current !== undefined) scene.setTemperature(tempRef.current);
         return () => {
           drumRef.current = null;
+          sceneRef.current = null;
           drum?.dispose();
           scene.dispose();
           sheet.dispose();
@@ -78,6 +85,11 @@ export default function Barograph() {
       canvas.remove();
     };
   }, []);
+
+  useEffect(() => {
+    tempRef.current = insideTemp;
+    if (insideTemp !== undefined) sceneRef.current?.setTemperature(insideTemp);
+  }, [insideTemp]);
 
   return (
     <div className="barograph" ref={holder}>

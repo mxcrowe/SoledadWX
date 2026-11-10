@@ -4,6 +4,8 @@ The Barograph page shows a brass and rosewood drum barograph in real time. Every
 
 **Status (2026-11-09):** Phase 1. The chart is inked live from the Archive (`soledadwx-ui/src/barograph/chart.ts` and `drum.ts`): one calendar week per sheet, 29.5 to 30.5 inHg, dragging the drum looks back up to four weeks, and the pen lifts while you do. `chart_placeholder.png` is now used only by Blender stills.
 
+**The movement (2026-11-09):** modelled on a Negretti & Zambra instrument (reference photos kept out of git). Two bridges of turned pillars with ball joints carry steel arbors on pointed pivots. The stack pulls the short end of the top lever, a link joins its slotted long end to a crank on the pen arbor, and the page works the whole chain from the pressure. Also new: the satin movement plate with its screws and the engraved name, the pen lifter that really pushes the pen off, the ink well, the zero knob, the drum's domed lid and chart clip (which goes round with the paper), and a red spirit thermometer that follows the inside temperature.
+
 ## How it fits together
 
 Blender builds the instrument and works out the soft, shadowed, bounced light once. The page (three.js) draws the result live and adds what must be live: reflections that follow the eye, and the moving parts.
@@ -15,7 +17,7 @@ Blender builds the instrument and works out the soft, shadowed, bounced light on
 | `make_studio_env.py` | Blender | `tex/studio_env.hdr`: the lighting, a dark studio with softboxes |
 | `make_view_lut.py` | Blender | Blender's view transform (AgX, Medium High Contrast) as a lookup table |
 | `build_barograph.py` | Blender | the model; `--render` a still, `--bake` the lighting, `--export` a `.glb`, `--save` a `.blend` |
-| `export_web.py` | system Python | runs the three above into `soledadwx-ui/public/barograph/` (about 3 minutes) |
+| `export_web.py` | system Python | runs the three above into `soledadwx-ui/public/barograph/` (several minutes: the bake visits every part) |
 | `dev_shot_sink.py` | system Python | saves frames posted by the dev page, to compare with a Blender still |
 
 Blender is 5.2.3 LTS at `E:\Graphics\Blender\blender.exe`, always run as `--background --factory-startup --python <script> -- <options>`.
@@ -40,6 +42,12 @@ A reference still:
 E:/Graphics/Blender/blender.exe --background --factory-startup --python build_barograph.py -- --render ../renders/hero.png --samples 600
 ```
 
+A close look at the movement with the hood left off (`--view` also takes `mech_left`, `mech_back` and `mech_top`):
+
+```bash
+E:/Graphics/Blender/blender.exe --background --factory-startup --python build_barograph.py -- --render ../renders/mech.png --view mech --bare
+```
+
 ## What the page receives (`soledadwx-ui/public/barograph/`)
 
 - `barograph.glb`: geometry, two UV sets, names, and the camera. No materials worth keeping; the page assigns its own by material name.
@@ -55,15 +63,18 @@ E:/Graphics/Blender/blender.exe --background --factory-startup --python build_ba
 - **One reflective layer on wood.** The lacquer coat mirrors; the wood under it does not. A live renderer blurs wide reflections too much, and this lighting (dark room, bright softboxes) shows it.
 - **No sheen on the table.** The table is baked, and a bake is only right from every angle if the cloth looks the same from every angle.
 - **Nothing lit may rotate.** Baked light would turn with it. To turn the drum, scroll the chart texture.
+- **What the page moves is metal.** Metal takes no light from the bake, only reflections, so it can move freely: the pen arbor and pen arm, the top lever, link and stack post, the pen lifter, and the chart clip. Each is told to cast no shadow in the bake (the `MOVING` list), or a ghost of it would stay behind when it moved.
+- **No clear glass inside the case.** The page draws see-through things after everything else, so anything clear behind the panes vanishes. The thermometer tube is enamel-backed (opaque white, red where the spirit is) and the ink bottle is full to the neck.
+- **One rule poses the movement** in both places: `lever_angle` in `build_barograph.py` and `makeMovement` in `scene.ts`. The page reads the pivots and pins from the model by name, so only the rule is shared, not the numbers.
 - **The studio image stops at the horizon, and the table below it stays lit.** Blender's real table hides everything below the horizon, but the page's reflections see it. A softbox painted down there, or a dark far table, showed up on the polished sides.
 - **Veneer wraps round the base.** One strip runs round all four sides so the grain turns the corners; its ends meet at the back left.
-- **Shared numbers** (arm length, chart geometry, dial scale) are marked "as in" or "must agree" in the files that share them.
+- **Shared numbers** (arm length, chart geometry, dial scale, the thermometer's scale and colours, the lifter's swing) are marked "as in" or "must agree" in the files that share them.
 
 ## Still to do
 
 - The paper-change levers, and temperature and humidity/dew point charts.
-- Dial thermometer: a red spirit column (Michael, 2026-11-09), driven by the inside temperature, since it sits in the room with the instrument. The needle already follows pressure.
-- Model detail: linkage, screws, drum lid, the paper's overlap and clip, softened edges on the base mouldings.
+- Model detail: softened edges on the base mouldings.
+- The satin movement plate shows only the studio in its reflections on the page; in Blender it also shows a soft image of the pillars standing on it.
 - Glass: more life in the bevels.
 - The pen arm casts no shadow yet (it moves, so it cannot be baked).
-- Weight: `barograph.glb` is 9.9 MB and the folder 24 MB. Decide whether the generated files live in git.
+- Weight: `barograph.glb` is about 12 MB and the folder 27 MB. The generated files live in git (decided 2026-11-09).

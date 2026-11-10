@@ -321,7 +321,7 @@ function App() {
       {view === "records" && <Records />}
       {view === "synopsis" && <Synopsis />}
       {view === "extremes" && <Extremes />}
-      {view === "barograph" && <Barograph />}
+      {view === "barograph" && <Barograph insideTemp={reading?.tempinf} />}
       {!BUILT.includes(view) && <Placeholder label={NAV.find((n) => n[0] === view)![1]} />}
 
       {view === "live" && (reading ? (
