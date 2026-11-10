@@ -31,6 +31,15 @@ const LIFTER_SWING_RAD = THREE.MathUtils.degToRad(31); // the turn of the lifter
 const THERMO = { f0: 236, f140: 124, from: -150, to: -30 };
 const THERMO_WHITE = [0.8, 0.78, 0.7] as const;
 const THERMO_RED = [0.45, 0.012, 0.02] as const;
+// Across the tube, back (against the dial) to front: where each band starts,
+// and its colour with the spirit in it and without (THERMO_BANDS in the build).
+const THERMO_BANDS: [number, readonly number[], readonly number[]][] = [
+  [0.0, [0.8, 0.78, 0.7], [0.8, 0.78, 0.7]], // the dial seen through the glass
+  [0.5, [0.55, 0.55, 0.52], [0.55, 0.55, 0.52]], // the glass wall, seen edge on
+  [0.7, [0.88, 0.88, 0.85], [0.88, 0.88, 0.85]], // clear glass over the dial
+  [0.89, [0.8, 0.3, 0.28], [0.88, 0.88, 0.85]], // the spirit, lit through its edge
+  [0.935, THERMO_RED, [0.88, 0.88, 0.85]], // the spirit: the middle half of the tube
+];
 const ROOM_F = 68; // shown until a reading arrives
 const PAPER_RADIUS_M = 0.0466;
 const DIAL_RAD_PER_INHG = THREE.MathUtils.degToRad(66);
@@ -256,13 +265,31 @@ export async function createBarograph(canvas: HTMLCanvasElement, options: Barogr
   scene.environment = env;
   scene.environmentRotation.y = Math.PI;
 
-  // The thermometer's spirit column: red then white, slid along the tube.
-  const strip = new Uint8Array(8);
-  [THERMO_RED, THERMO_WHITE].forEach((rgb, i) => {
-    const c = linear(rgb[0], rgb[1], rgb[2]).convertLinearToSRGB();
-    strip.set([Math.round(c.r * 255), Math.round(c.g * 255), Math.round(c.b * 255), 255], i * 4);
-  });
-  const column = new THREE.DataTexture(strip, 2, 1, THREE.RGBAFormat);
+  // The thermometer, painted to look like glass (it cannot be clear: it would
+  // vanish behind the case's panes). Left column: with spirit; right: empty.
+  // Rows run across the tube, and the left half is slid along it.
+  const ROWS = 64;
+  const strip = new Uint8Array(2 * ROWS * 4);
+  const bandColour = (v: number, which: 1 | 2) => {
+    let k = 0;
+    while (k + 1 < THERMO_BANDS.length && THERMO_BANDS[k + 1][0] <= v) k++;
+    const v0 = THERMO_BANDS[k][0];
+    const c0 = THERMO_BANDS[k][which];
+    if (k + 1 === THERMO_BANDS.length) return c0;
+    const v1 = THERMO_BANDS[k + 1][0];
+    const c1 = THERMO_BANDS[k + 1][which];
+    const f = (v - v0) / (v1 - v0);
+    return c0.map((c, i) => c + (c1[i] - c) * f);
+  };
+  for (let row = 0; row < ROWS; row++) {
+    const v = 1 - (row + 0.5) / ROWS; // glTF flips V: row 0 is the front of the tube
+    ([1, 2] as const).forEach((which, col) => {
+      const [r, g, b] = bandColour(v, which);
+      const c = linear(r, g, b).convertLinearToSRGB();
+      strip.set([Math.round(c.r * 255), Math.round(c.g * 255), Math.round(c.b * 255), 255], (row * 2 + col) * 4);
+    });
+  }
+  const column = new THREE.DataTexture(strip, 2, ROWS, THREE.RGBAFormat);
   column.colorSpace = THREE.SRGBColorSpace;
   column.magFilter = column.minFilter = THREE.NearestFilter;
   column.repeat.x = 0.5;
@@ -314,8 +341,12 @@ export async function createBarograph(canvas: HTMLCanvasElement, options: Barogr
     // panes), so the ink bottle is full and the thermometer tube is enamel-backed.
     InkGlass: baked(new THREE.MeshStandardMaterial({ color: linear(0.012, 0.012, 0.035), roughness: 0.03 })),
     ThermoGlass: baked(new THREE.MeshStandardMaterial({ color: linear(...THERMO_WHITE), roughness: 0.08 })),
-    ThermoSpirit: baked(new THREE.MeshStandardMaterial({ color: linear(...THERMO_RED), roughness: 0.06 })),
-    ThermoTube: baked(new THREE.MeshStandardMaterial({ map: column, roughness: 0.08 })),
+    ThermoSpirit: baked(
+      new THREE.MeshPhysicalMaterial({ color: linear(...THERMO_RED), roughness: 0.06, clearcoat: 1, clearcoatRoughness: 0.03 }),
+    ),
+    ThermoTube: baked(
+      new THREE.MeshPhysicalMaterial({ map: column, roughness: 0.15, clearcoat: 1, clearcoatRoughness: 0.03 }),
+    ),
     Brass: metal(linear(0.8, 0.53, 0.17), 0.16),
     BrassSatin: metal(linear(0.8, 0.55, 0.2), 0.3, 0.7),
     BlackSteel: metal(linear(0.09, 0.09, 0.1), 0.34),

@@ -16,7 +16,7 @@ Options after `--`:
   --save PATH       .blend to open in Blender
   --wood NAME       rosewood (default) or oak
   --view NAME       hero (default), front, right, or a close view of the movement:
-                    mech, mech_left, mech_back, mech_top, or pen (the writing point)
+                    mech, mech_left, mech_back, mech_top, pen (the writing point) or thermo
   --bare            leave the hood off, to see the movement plainly
   --samples N       Cycles samples (default 256)
   --res WxH         default 1920x1080
@@ -99,7 +99,7 @@ def parse_args():
     p.add_argument("--bake-size", type=int, default=2048)
     p.add_argument("--bake-samples", type=int, default=384)
     p.add_argument("--wood", default="rosewood", choices=["rosewood", "oak"])
-    p.add_argument("--view", default="hero", choices=["hero", "front", "right", "mech", "mech_left", "mech_back", "mech_top", "pen"])
+    p.add_argument("--view", default="hero", choices=["hero", "front", "right", "mech", "mech_left", "mech_back", "mech_top", "pen", "thermo"])
     p.add_argument("--samples", type=int, default=256)
     p.add_argument("--res", default="1920x1080")
     p.add_argument("--pressure", type=float, default=29.777)
@@ -266,22 +266,39 @@ def make_felt(name):
 
 
 def make_thermo(name, level):
-    """The thermometer tube: red spirit up to `level` of its length (by U), enamel white beyond."""
+    """The thermometer tube, painted to look like glass: red spirit up to `level` of its length (by U).
+
+    It cannot really be clear (the page would lose it behind the case's glass),
+    so its colour changes across the tube (by V) as clear glass over a white
+    dial would look: the dial through the glass, darker walls at the edges, and
+    the spirit as a narrower core inside. A clear coat gives it the shine.
+    """
     mat, nt, bsdf, _ = new_material(name)
     uv = nt.nodes.new("ShaderNodeUVMap")
     uv.uv_map = "UVMap"
     parts = nt.nodes.new("ShaderNodeSeparateXYZ")
+    nt.links.new(uv.outputs["UV"], parts.inputs["Vector"])
+    ramps = []
+    for which in (1, 2):
+        ramp = nt.nodes.new("ShaderNodeValToRGB")
+        ramp.color_ramp.interpolation = "LINEAR"
+        els = ramp.color_ramp.elements
+        while len(els) < len(THERMO_BANDS):
+            els.new(0.5)
+        for el, band in zip(els, THERMO_BANDS):
+            el.position, el.color = band[0], rgba(*band[which])
+        nt.links.new(parts.outputs["Y"], ramp.inputs["Fac"])
+        ramps.append(ramp)
     below = nt.nodes.new("ShaderNodeMath")
     below.operation = "LESS_THAN"
     below.inputs[1].default_value = level
     pick = nt.nodes.new("ShaderNodeMixRGB")
-    pick.inputs["Color1"].default_value = rgba(*THERMO_WHITE)
-    pick.inputs["Color2"].default_value = rgba(*THERMO_RED)
-    nt.links.new(uv.outputs["UV"], parts.inputs["Vector"])
+    nt.links.new(ramps[1].outputs["Color"], pick.inputs["Color1"])
+    nt.links.new(ramps[0].outputs["Color"], pick.inputs["Color2"])
     nt.links.new(parts.outputs["X"], below.inputs[0])
     nt.links.new(below.outputs[0], pick.inputs["Fac"])
     nt.links.new(pick.outputs["Color"], bsdf.inputs["Base Color"])
-    set_inputs(bsdf, Roughness=0.08)
+    set_inputs(bsdf, Roughness=0.15, Coat_Weight=1.0, Coat_Roughness=0.03)
     return mat
 
 
@@ -741,8 +758,15 @@ INK_GLASS = make_plain("InkGlass", (0.012, 0.012, 0.035), 0.03)
 # The page cannot show clear glass inside the case, so the thermometer is an
 # enamel-backed tube (opaque white) and the ink bottle is full to the neck.
 THERMO_WHITE, THERMO_RED = (0.80, 0.78, 0.70), (0.45, 0.012, 0.02)       # scene.ts must agree
+THERMO_BANDS = (                       # across the tube, back (V 0) to front (V 1): (from V, spirit, empty); scene.ts must agree
+    (0.00, (0.80, 0.78, 0.70), (0.80, 0.78, 0.70)),   # the dial seen through the glass
+    (0.50, (0.55, 0.55, 0.52), (0.55, 0.55, 0.52)),   # the glass wall, seen edge on
+    (0.70, (0.88, 0.88, 0.85), (0.88, 0.88, 0.85)),   # clear glass over the dial
+    (0.89, (0.80, 0.30, 0.28), (0.88, 0.88, 0.85)),   # the spirit, lit through its edge
+    (0.935, (0.45, 0.012, 0.02), (0.88, 0.88, 0.85)), # the spirit: the middle half of the tube
+)
 THERMO_GLASS = make_plain("ThermoGlass", THERMO_WHITE, 0.08)
-THERMO_SPIRIT = make_plain("ThermoSpirit", THERMO_RED, 0.06)
+THERMO_SPIRIT = make_plain("ThermoSpirit", THERMO_RED, 0.06, Coat_Weight=1.0, Coat_Roughness=0.03)
 thermo_deg = 90.0 - (THERMO_F0_DEG + (THERMO_F140_DEG - THERMO_F0_DEG) * ARGS.temp / 140.0)
 THERMO_TUBE = make_thermo("ThermoTube", (thermo_deg - THERMO_SWEEP[0]) / (THERMO_SWEEP[1] - THERMO_SWEEP[0]))
 
@@ -1115,7 +1139,8 @@ VIEWS = {"hero": (16.0, 10.0, 1750.0, 85.0, (0.0, 0.0, 118.0)),
          "mech_left": (35.0, 28.0, 520.0, 50.0, (25.0, 0.0, 158.0)),
          "mech_back": (150.0, 25.0, 520.0, 50.0, (45.0, 0.0, 158.0)),
          "mech_top": (0.0, 80.0, 600.0, 50.0, (30.0, 0.0, 140.0)),
-         "pen": (40.0, 18.0, 260.0, 60.0, (-95.0, -42.0, 168.0))}
+         "pen": (40.0, 18.0, 260.0, 60.0, (-95.0, -42.0, 168.0)),
+         "thermo": (-12.0, 12.0, 260.0, 60.0, (40.0, -70.0, 140.0))}
 yaw, elev, dist, lens, target = VIEWS[ARGS.view]
 cam_data.lens = lens
 yaw_r, elev_r = math.radians(yaw), math.radians(elev)
