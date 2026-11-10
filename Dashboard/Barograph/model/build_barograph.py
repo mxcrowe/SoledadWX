@@ -16,7 +16,7 @@ Options after `--`:
   --save PATH       .blend to open in Blender
   --wood NAME       rosewood (default) or oak
   --view NAME       hero (default), front, right, or a close view of the movement:
-                    mech, mech_left, mech_back, mech_top
+                    mech, mech_left, mech_back, mech_top, or pen (the writing point)
   --bare            leave the hood off, to see the movement plainly
   --samples N       Cycles samples (default 256)
   --res WxH         default 1920x1080
@@ -99,7 +99,7 @@ def parse_args():
     p.add_argument("--bake-size", type=int, default=2048)
     p.add_argument("--bake-samples", type=int, default=384)
     p.add_argument("--wood", default="rosewood", choices=["rosewood", "oak"])
-    p.add_argument("--view", default="hero", choices=["hero", "front", "right", "mech", "mech_left", "mech_back", "mech_top"])
+    p.add_argument("--view", default="hero", choices=["hero", "front", "right", "mech", "mech_left", "mech_back", "mech_top", "pen"])
     p.add_argument("--samples", type=int, default=256)
     p.add_argument("--res", default="1920x1080")
     p.add_argument("--pressure", type=float, default=29.777)
@@ -933,19 +933,18 @@ rod("CrankPinRod", (CRANK_PIN[0], crank_y - 2.8, CRANK_PIN[1]), (CRANK_PIN[0], c
     segs=12, parent=pen_arbor)
 empty("CrankPin", (CRANK_PIN[0], crank_y, CRANK_PIN[1]), parent=pen_arbor)
 
-# The pen: a thin steel blade, and at its end a little trough of ink whose point writes.
-blade_end = -PEN_ARM + 7.0
-prism("PenArmBlade", [(-9.0, -3.2), (-9.0, 3.2), (blade_end, 1.15), (blade_end, -1.15)], 0.5, STEEL, (0.0, 0.25, 0.0),
+# The pen: a thin steel blade that runs right to the writing point, where its
+# end is bent at a right angle toward the paper and tipped with ink.
+blade_end = -PEN_ARM - 0.25
+prism("PenArmBlade", [(-9.0, -3.2), (-9.0, 3.2), (blade_end, 1.0), (blade_end, -1.0)], 0.5, STEEL, (0.0, 0.25, 0.0),
       (1, 0, 0), (0, 0, 1), parent=arm, smooth=None)
 slotted_head("PenBladeScrew", 1.9, 1.3, BRASS, slot=15.0, loc=(-15.0, -0.25, 0.0), rot=(90, 0, 0), parent=arm)
-box("PenSleeve", (blade_end + 1.5, 0.0, 0.0), (3.0, 1.1, 2.9), STEEL, bevel=0.15, parent=arm)
-nib_a, nib_b = (-PEN_ARM - 2.2, 0.25, 1.7), (blade_end, 0.25, 1.7)
-nib_tip, nib_keel = (-PEN_ARM, 3.4, 0.0), (-PEN_ARM + 2.4, 0.25, -1.9)
-new_object("PenNib", [nib_a, nib_b, nib_tip, nib_keel], [(0, 1, 2), (0, 3, 1), (0, 2, 3), (3, 2, 1)], None, STEEL,
-           parent=arm, closed=True, smooth=None)
-ink_mid = [(nib_a[k] + nib_b[k] + nib_tip[k]) / 3.0 for k in range(3)]
-new_object("PenInk", [tuple(ink_mid[k] + 0.8 * (p[k] - ink_mid[k]) + (0.06 if k == 2 else 0.0) for k in range(3))
-                      for p in (nib_a, nib_b, nib_tip)], [(0, 1, 2)], None, INK, parent=arm, smooth=None)
+box("PenSleeve", (-PEN_ARM + 5.5, 0.0, 0.0), (2.4, 1.1, 2.6), STEEL, bevel=0.15, parent=arm)
+# The bent tip, in the plane across the blade: from the blade (y = 0) out to the paper (y = 3.4), tapering.
+prism("PenNib", [(-0.25, -1.0), (2.6, -0.45), (2.6, 0.45), (-0.25, 1.0)], 0.5, STEEL, (blade_end, 0.0, 0.0),
+      (0, 1, 0), (0, 0, 1), parent=arm, smooth=None)
+prism("PenInk", [(2.6, -0.45), (3.4, -0.25), (3.4, 0.25), (2.6, 0.45)], 0.5, INK, (blade_end, 0.0, 0.0),
+      (0, 1, 0), (0, 0, 1), parent=arm, smooth=None)
 
 # The link between the top lever's slotted end and the crank.
 lever_end, crank_end = swing(LEVER_PIN, top_angle), swing(CRANK_PIN, pen_angle)
@@ -1115,7 +1114,8 @@ VIEWS = {"hero": (16.0, 10.0, 1750.0, 85.0, (0.0, 0.0, 118.0)),
          "mech": (-35.0, 22.0, 520.0, 50.0, (50.0, -5.0, 158.0)),
          "mech_left": (35.0, 28.0, 520.0, 50.0, (25.0, 0.0, 158.0)),
          "mech_back": (150.0, 25.0, 520.0, 50.0, (45.0, 0.0, 158.0)),
-         "mech_top": (0.0, 80.0, 600.0, 50.0, (30.0, 0.0, 140.0))}
+         "mech_top": (0.0, 80.0, 600.0, 50.0, (30.0, 0.0, 140.0)),
+         "pen": (40.0, 18.0, 260.0, 60.0, (-95.0, -42.0, 168.0))}
 yaw, elev, dist, lens, target = VIEWS[ARGS.view]
 cam_data.lens = lens
 yaw_r, elev_r = math.radians(yaw), math.radians(elev)
