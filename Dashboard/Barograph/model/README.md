@@ -62,7 +62,7 @@ E:/Graphics/Blender/blender.exe --background --factory-startup --python build_ba
 ## Still to do
 
 - The paper-change levers, and temperature and humidity/dew point charts.
-- Drive the dial thermometer from live readings (the needle already follows pressure).
+- Dial thermometer: a red spirit column (Michael, 2026-11-09), driven by the inside temperature, since it sits in the room with the instrument. The needle already follows pressure.
 - Model detail: linkage, screws, drum lid, the paper's overlap and clip, softened edges on the base mouldings.
 - Glass: more life in the bevels.
 - The pen arm casts no shadow yet (it moves, so it cannot be baked).
