@@ -656,11 +656,13 @@ Saharan dust & AOD, European pollen, Mediterranean-wind rose, ASX200 ticker.
 
 ## Barograph page (started 2026-11-09)
 
-Built so far: the instrument, the live pressure chart with drag to look back, the working movement and
-the dial thermometer. See `Dashboard/Barograph/model/README.md` for the pipeline and what is still to do
-(paper-change levers with temperature and humidity/dew point charts, glass bevels, a shadow under the pen arm).
+Built so far: the instrument, the live chart with drag to look back, the working movement, the dial
+thermometer, and three papers (pressure, temperature, humidity with dew point) changed by the quadrant
+lever. See `Dashboard/Barograph/model/README.md` for the pipeline and what is still to do (a second pen
+for dew point, glass bevels, a shadow under the pen arm).
 Decided (Michael, 2026-11-09): the generated page assets live in git; the chart uses an expanded
-29.5 to 30.5 inHg scale; each sheet is one calendar week. Still open:
+29.5 to 30.5 inHg scale; each sheet is one calendar week; temperature runs 50 to 90 °F and dew point
+30 to 70 °F, each widened only for a week that goes beyond. Still open:
 
 - The veneer figure on the slim hood frame is lively; calmer straight grain there is an option.
 

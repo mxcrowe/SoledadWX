@@ -487,6 +487,14 @@ p {
   border: 1px solid rgba(224, 180, 106, 0.6); background: rgba(224, 180, 106, 0.12); color: #e0b46a;
 }
 .baro-home:hover { background: rgba(224, 180, 106, 0.25); }
+.baro-papers { display: inline-flex; border: 1px solid rgba(255, 255, 255, 0.22); border-radius: 6px; overflow: hidden; }
+.baro-papers button {
+  padding: 0.2rem 0.7rem; cursor: pointer; font-size: 0.85rem;
+  border: 0; border-left: 1px solid rgba(255, 255, 255, 0.22); background: transparent; color: rgba(255, 255, 255, 0.6);
+}
+.baro-papers button:first-child { border-left: 0; }
+.baro-papers button:hover { background: rgba(255, 255, 255, 0.1); }
+.baro-papers button.on { background: rgba(224, 180, 106, 0.22); color: #e0b46a; }
 .barograph-note {
   position: absolute; left: 1.2rem; bottom: 0.9rem; margin: 0;
   color: rgba(255, 255, 255, 0.42); font-size: 0.8rem; pointer-events: none;

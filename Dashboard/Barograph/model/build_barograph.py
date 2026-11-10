@@ -16,7 +16,7 @@ Options after `--`:
   --save PATH       .blend to open in Blender
   --wood NAME       rosewood (default) or oak
   --view NAME       hero (default), front, right, or a close view of the movement:
-                    mech, mech_left, mech_back, mech_top, pen (the writing point) or thermo
+                    mech, mech_left, mech_back, mech_top, pen (the writing point), thermo or selector
   --bare            leave the hood off, to see the movement plainly
   --samples N       Cycles samples (default 256)
   --res WxH         default 1920x1080
@@ -26,7 +26,8 @@ Options after `--`:
   --env-rot DEG     turn the studio lighting about the vertical
 
 Names the web page relies on: Drum, ChartClip, PenArbor, PenArm, CrankPin, TopLever,
-LeverPin, StackPin, Link, StackPost, PenLifter, Needle, Table, and the material names.
+LeverPin, StackPin, Link, StackPost, PenLifter, PaperLever, Quadrant..., Needle, Table,
+and the material names.
 """
 import argparse
 import math
@@ -85,6 +86,11 @@ CRANK_PIN = (-17.0, -4.5)              # from the pen arbor to the link's lower 
 LINK = math.hypot(PIVOT[0] + CRANK_PIN[0] - TOP_ARBOR[0] - LEVER_PIN[0], PIVOT[2] + CRANK_PIN[1] - TOP_ARBOR[1] - LEVER_PIN[1])
 LIFTER = (-8.0, -50.0)                 # the pen lifter's stud
 INK_WELL = (-10.0, 46.0)
+# The paper selector: a lever on a quadrant, read from the instrument's right side.
+SELECTOR = (115.5, -19.0)              # its pivot, near the right edge of the movement plate
+SELECTOR_R = (21.5, 31.5)              # the quadrant band, inner and outer radius
+SELECTOR_DEG = (50.0, 0.0, -50.0)      # the lever's turn about Z at BAR, THERM, HYGR (scene.ts must agree)
+SELECTOR_NAMES = ("BAR", "THERM", "HYGR")
 ENGRAVING_FONT = "C:/Windows/Fonts/COPRGTB.TTF"   # Copperplate Gothic, as on the dial
 
 
@@ -99,7 +105,7 @@ def parse_args():
     p.add_argument("--bake-size", type=int, default=2048)
     p.add_argument("--bake-samples", type=int, default=384)
     p.add_argument("--wood", default="rosewood", choices=["rosewood", "oak"])
-    p.add_argument("--view", default="hero", choices=["hero", "front", "right", "mech", "mech_left", "mech_back", "mech_top", "pen", "thermo"])
+    p.add_argument("--view", default="hero", choices=["hero", "front", "right", "mech", "mech_left", "mech_back", "mech_top", "pen", "thermo", "selector"])
     p.add_argument("--samples", type=int, default=256)
     p.add_argument("--res", default="1920x1080")
     p.add_argument("--pressure", type=float, default=29.777)
@@ -682,6 +688,49 @@ def engrave(name, text, size, loc, mat):
     return ob
 
 
+def glyph(char, size):
+    """One letter as flat outlines: (x, y) vertices in mm with the baseline at y = 0, and its faces."""
+    curve = bpy.data.curves.new("Glyph", "FONT")
+    curve.body = char
+    curve.size = size * S
+    if os.path.exists(ENGRAVING_FONT):
+        curve.font = bpy.data.fonts.load(ENGRAVING_FONT, check_existing=True)
+    scratch = bpy.data.objects.new("Glyph", curve)
+    bpy.context.scene.collection.objects.link(scratch)
+    bpy.context.view_layer.update()
+    mesh = bpy.data.meshes.new_from_object(scratch.evaluated_get(bpy.context.evaluated_depsgraph_get()))
+    bpy.data.objects.remove(scratch)
+    verts = [(v.co.x / S, v.co.y / S) for v in mesh.vertices]
+    faces = [tuple(poly.vertices) for poly in mesh.polygons]
+    bpy.data.meshes.remove(mesh)
+    return verts, faces
+
+
+def engrave_arc(words, size, centre, radius, z, mat, name):
+    """Lettering round an arc about `centre`, read from the centre looking out.
+
+    `words` is a list of (text, turn): each word's middle lies where a lever
+    turned `turn` degrees about Z from -X would point. Returns one object.
+    """
+    verts, faces = [], []
+    for text, turn in words:
+        letters = [glyph(char, size) for char in text]
+        spans = [(min(x for x, _ in gv), max(x for x, _ in gv)) for gv, _ in letters]
+        gap = 0.16 * size
+        along = -(sum(hi - lo for lo, hi in spans) + gap * (len(letters) - 1)) / 2.0
+        for (gv, gf), (lo, hi) in zip(letters, spans):
+            # The letter stands at its own middle: up is out from the centre, and it reads toward +Y.
+            a = math.radians(turn) - (along + (hi - lo) / 2.0) / radius
+            out, right = (-math.cos(a), -math.sin(a)), (-math.sin(a), math.cos(a))
+            base = len(verts)
+            for x, y in gv:
+                u, v = x - (lo + hi) / 2.0, radius + y
+                verts.append((centre[0] + out[0] * v + right[0] * u, centre[1] + out[1] * v + right[1] * u, z))
+            faces += [tuple(base + i for i in face) for face in gf]
+            along += hi - lo + gap
+    return new_object(name, verts, faces, None, mat, smooth=None)
+
+
 def flush_screw(name, x, y, z, slot):
     """A countersunk brass screw, its head just proud of the plate, its slot dark."""
     r = 2.7
@@ -1009,6 +1058,44 @@ lathe("InkStopper", [(0, iz + 46.4), (3.3, iz + 46.4), (3.8, iz + 48.0), (3.8, i
 lathe("InkKnob", [(0, iz + 52.8), (1.3, iz + 52.8), (1.3, iz + 57.5)] + ball_pts(iz + 60.5, 3.0, 1.3, 0.0), BRASS, segs=24,
       closed=True, loc=(ix, iy, 0.0))
 
+# Paper selector: a lever that swings over an engraved quadrant to choose the
+# chart on the drum. It lies at the right-hand end of the plate and is read
+# from that side. The page swings PaperLever; a press on anything named
+# Quadrant... asks for the nearest position.
+def on_quadrant(turn, r):
+    """The point where a lever turned `turn` degrees about Z reaches radius r from the pivot."""
+    a = math.radians(turn)
+    return (SELECTOR[0] - r * math.cos(a), SELECTOR[1] - r * math.sin(a))
+
+
+band = [on_quadrant(90.0 - 180.0 * i / 48, SELECTOR_R[1]) for i in range(49)]
+band += [on_quadrant(-90.0 + 180.0 * i / 48, SELECTOR_R[0]) for i in range(49)]
+band_top = MECH_TOP + 1.0
+prism("QuadrantBand", band, 1.0, BRASS_BRIGHT, (0.0, 0.0, MECH_TOP), (1, 0, 0), (0, 1, 0), smooth=30.0, bevel=0.2)
+for n, turn in enumerate((81.0, -81.0)):
+    flush_screw(f"QuadrantScrew{n}", *on_quadrant(turn, sum(SELECTOR_R) / 2.0), band_top, 35.0 + 80.0 * n)
+engrave_arc(list(zip(SELECTOR_NAMES, SELECTOR_DEG)), 4.3, SELECTOR, SELECTOR_R[0] + 3.4, band_top + 0.04, ENGRAVE,
+            "QuadrantLettering")
+marks = []
+for turn in SELECTOR_DEG:                # an index line at each position, where the lever's point comes to rest
+    a = math.radians(turn)
+    side = (-math.sin(a) * 0.28, math.cos(a) * 0.28)
+    inner, outer = on_quadrant(turn, SELECTOR_R[0] + 0.5), on_quadrant(turn, SELECTOR_R[0] + 2.2)
+    marks.append(extruded([(inner[0] - side[0], inner[1] - side[1]), (inner[0] + side[0], inner[1] + side[1]),
+                           (outer[0] + side[0], outer[1] + side[1]), (outer[0] - side[0], outer[1] - side[1])],
+                          band_top + 0.02, band_top + 0.05))
+solid("QuadrantMarks", marks, ENGRAVE, smooth=None)
+lathe("PaperLeverSeat", [(0, 0.0), (5.0, 0.0), (5.0, 1.2), (0, 1.2)], BRASS, segs=32, closed=True,
+      loc=(SELECTOR[0], SELECTOR[1], MECH_TOP))
+paper_lever = empty("PaperLever", (SELECTOR[0], SELECTOR[1], MECH_TOP), rot=(0.0, 0.0, SELECTOR_DEG[0]))
+lathe("PaperLeverHub", [(0, 1.2), (4.2, 1.2), (4.2, 3.0), (3.4, 3.6), (0, 3.6)], BRASS, segs=32, closed=True, parent=paper_lever)
+slotted_head("PaperLeverScrew", 2.3, 1.4, BRASS, slot=40.0, loc=(0.0, 0.0, 3.6), parent=paper_lever)
+reach = SELECTOR_R[0] - 0.7              # the lever's point stops just short of the band
+prism("PaperLeverArm", [(0.0, -2.6), (-14.0, -2.0), (-reach, 0.0), (-14.0, 2.0), (0.0, 2.6)], 1.4, BRASS_BRIGHT,
+      (0.0, 0.0, 1.6), (1, 0, 0), (0, 1, 0), parent=paper_lever, smooth=None, bevel=0.25)
+lathe("PaperLeverKnob", [(0, 3.0), (1.5, 3.0), (1.5, 5.6)] + ball_pts(8.6, 3.2, 1.5, 0.0), BRASS, segs=24, closed=True,
+      loc=(-12.5, 0.0, 0.0), parent=paper_lever)
+
 # Dial: local X right, Y up, Z toward the viewer.
 dial = empty("Dial", DIAL_C, rot=(90, 0, 0))
 lathe("DialFace", [(DIAL_HOLE, 0.0), (DIAL_R, 0.0), (DIAL_R, 1.2), (DIAL_HOLE, 1.2), (DIAL_HOLE, 0.0)], DIAL, segs=128,
@@ -1050,7 +1137,7 @@ for label, deg, mat, r in (("Bulb", THERMO_SWEEP[0], THERMO_SPIRIT, 2.7), ("Tip"
 
 # What the page moves must leave nothing behind in the bake: no shadow on the
 # paper where the pen was, no dark patch on the plate where the lifter stood.
-MOVING = ("ChartClip", "PenArbor", "TopLever", "Link", "StackPost", "PenLifter")
+MOVING = ("ChartClip", "PenArbor", "TopLever", "Link", "StackPost", "PenLifter", "PaperLever")
 for ob in scene.objects:
     node = ob
     while node is not None and node.name not in MOVING:
@@ -1140,7 +1227,8 @@ VIEWS = {"hero": (16.0, 10.0, 1750.0, 85.0, (0.0, 0.0, 118.0)),
          "mech_back": (150.0, 25.0, 520.0, 50.0, (45.0, 0.0, 158.0)),
          "mech_top": (0.0, 80.0, 600.0, 50.0, (30.0, 0.0, 140.0)),
          "pen": (40.0, 18.0, 260.0, 60.0, (-95.0, -42.0, 168.0)),
-         "thermo": (-12.0, 12.0, 260.0, 60.0, (40.0, -70.0, 140.0))}
+         "thermo": (-12.0, 12.0, 260.0, 60.0, (40.0, -70.0, 140.0)),
+         "selector": (-90.0, 38.0, 330.0, 60.0, (100.0, -19.0, 118.0))}
 yaw, elev, dist, lens, target = VIEWS[ARGS.view]
 cam_data.lens = lens
 yaw_r, elev_r = math.radians(yaw), math.radians(elev)

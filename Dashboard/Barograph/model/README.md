@@ -6,6 +6,8 @@ The Barograph page shows a brass and rosewood drum barograph in real time. Every
 
 **The movement (2026-11-09):** modelled on a Negretti & Zambra instrument (reference photos kept out of git). Two bridges of turned pillars with ball joints carry steel arbors on pointed pivots. The stack pulls the short end of the top lever, a link joins its slotted long end to a crank on the pen arbor, and the page works the whole chain from the pressure. Also new: the satin movement plate with its screws and the engraved name, the pen lifter that really pushes the pen off, the ink well, the zero knob, the drum's domed lid and chart clip (which goes round with the paper), and a red spirit thermometer that follows the inside temperature.
 
+**Three papers (2026-11-09):** the drum takes a pressure, a temperature or a humidity and dew point paper (`soledadwx-ui/src/barograph/papers.ts`), chosen with the lever on the engraved quadrant at the right-hand end of the movement plate (BAR, THERM, HYGR) or with the buttons on the page. Changing paper lifts the pen, spins the drum once while the new sheet wraps on behind the clip, and sets the pen down. The plan it was built to, with Michael's decisions, is `../PAPER_LEVERS_PLAN.md`.
+
 ## How it fits together
 
 Blender builds the instrument and works out the soft, shadowed, bounced light once. The page (three.js) draws the result live and adds what must be live: reflections that follow the eye, and the moving parts.
@@ -42,7 +44,7 @@ A reference still:
 E:/Graphics/Blender/blender.exe --background --factory-startup --python build_barograph.py -- --render ../renders/hero.png --samples 600
 ```
 
-A close look at the movement with the hood left off (`--view` also takes `mech_left`, `mech_back` and `mech_top`):
+A close look at the movement with the hood left off (`--view` also takes `mech_left`, `mech_back`, `mech_top`, `pen`, `thermo` and `selector`):
 
 ```bash
 E:/Graphics/Blender/blender.exe --background --factory-startup --python build_barograph.py -- --render ../renders/mech.png --view mech --bare
@@ -63,16 +65,16 @@ E:/Graphics/Blender/blender.exe --background --factory-startup --python build_ba
 - **One reflective layer on wood.** The lacquer coat mirrors; the wood under it does not. A live renderer blurs wide reflections too much, and this lighting (dark room, bright softboxes) shows it.
 - **No sheen on the table.** The table is baked, and a bake is only right from every angle if the cloth looks the same from every angle.
 - **Nothing lit may rotate.** Baked light would turn with it. To turn the drum, scroll the chart texture.
-- **What the page moves is metal.** Metal takes no light from the bake, only reflections, so it can move freely: the pen arbor and pen arm, the top lever, link and stack post, the pen lifter, and the chart clip. Each is told to cast no shadow in the bake (the `MOVING` list), or a ghost of it would stay behind when it moved.
+- **What the page moves is metal.** Metal takes no light from the bake, only reflections, so it can move freely: the pen arbor and pen arm, the top lever, link and stack post, the pen lifter, the chart clip, and the paper selector's lever. Each is told to cast no shadow in the bake (the `MOVING` list), or a ghost of it would stay behind when it moved.
 - **No clear glass inside the case.** The page draws see-through things after everything else, so anything clear behind the panes vanishes. The thermometer tube is enamel-backed (opaque white, red where the spirit is) and the ink bottle is full to the neck.
 - **One rule poses the movement** in both places: `lever_angle` in `build_barograph.py` and `makeMovement` in `scene.ts`. The page reads the pivots and pins from the model by name, so only the rule is shared, not the numbers.
 - **The studio image stops at the horizon, and the table below it stays lit.** Blender's real table hides everything below the horizon, but the page's reflections see it. A softbox painted down there, or a dark far table, showed up on the polished sides.
 - **Veneer wraps round the base.** One strip runs round all four sides so the grain turns the corners; its ends meet at the back left.
-- **Shared numbers** (arm length, chart geometry, dial scale, the thermometer's scale and colours, the lifter's swing) are marked "as in" or "must agree" in the files that share them.
+- **Shared numbers** (arm length, chart geometry, dial scale, the thermometer's scale and colours, the lifter's swing, the selector's three positions) are marked "as in" or "must agree" in the files that share them.
 
 ## Still to do
 
-- The paper-change levers, and temperature and humidity/dew point charts.
+- A second pen arm for dew point on the humidity paper. For now dew point is a finer printed trace, and the one pen writes humidity.
 - Model detail: softened edges on the base mouldings.
 - The satin movement plate shows only the studio in its reflections on the page; in Blender it also shows a soft image of the pillars standing on it.
 - Glass: more life in the bevels.

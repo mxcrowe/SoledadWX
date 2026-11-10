@@ -6,8 +6,8 @@
 // live: reflections that follow the eye, and the moving parts.
 //
 // Names it relies on in the model: Drum, ChartClip, PenArbor, PenArm, CrankPin,
-// TopLever, LeverPin, StackPin, Link, StackPost, PenLifter, Needle. Materials
-// are matched by name.
+// TopLever, LeverPin, StackPin, Link, StackPost, PenLifter, PaperLever,
+// Quadrant*, Needle. Materials are matched by name.
 
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
@@ -15,13 +15,13 @@ import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { Reflector } from "three/addons/objects/Reflector.js";
 import { createViewTransform } from "./tonemap";
-import { SCALE, WEEK_HOURS } from "./chart";
+import { WEEK_HOURS } from "./chart";
 
 const ASSETS = `${import.meta.env.BASE_URL}barograph/`;
 
 // Shared with build_barograph.py (millimetres there, metres here).
 const PEN_ARM_M = 0.173;
-const CHART_GRID_M = 0.09; // SCALE.lo to SCALE.hi on the chart
+const CHART_GRID_M = 0.09; // the height of the chart's grid, bottom of the scale to top
 const CHART_AT_PEN_HOURS = 82; // the hour of the week under the pen in the model as built
 const PEN_LIFT_RAD = THREE.MathUtils.degToRad(4); // how far the lifter swings the pen off the paper
 const LIFTER_SWING_RAD = THREE.MathUtils.degToRad(31); // the turn of the lifter's foot that brings its rod that far
@@ -41,6 +41,10 @@ const THERMO_BANDS: [number, readonly number[], readonly number[]][] = [
   [0.935, THERMO_RED, [0.88, 0.88, 0.85]], // the spirit: the middle half of the tube
 ];
 const ROOM_F = 68; // shown until a reading arrives
+// The paper selector: the lever's turn at each of its three positions (BAR,
+// THERM, HYGR), as built in build_barograph.py, and how fast it swings there.
+const SELECTOR_RAD = [50, 0, -50].map(THREE.MathUtils.degToRad);
+const SELECTOR_STEP_RAD = THREE.MathUtils.degToRad(5);
 const PAPER_RADIUS_M = 0.0466;
 const DIAL_RAD_PER_INHG = THREE.MathUtils.degToRad(66);
 const LIGHT_SCALE = 2.5; // light.png stores light / LIGHT_SCALE
@@ -182,6 +186,12 @@ const SHARP_PRINT = THREE.ShaderChunk.map_fragment.replace(
   "texture2D( map, vMapUv )",
   "texture2D( map, vMapUv, -0.8 )",
 );
+// The chart paper is sharp print too, and can show a second sheet over part of
+// its length: the new paper, wrapping on behind the clip while the drum turns.
+const PAPER_PRINT = THREE.ShaderChunk.map_fragment.replace(
+  "texture2D( map, vMapUv )",
+  "( vPaperU < wrapSplit ? texture2D( nextMap, vMapUv, -0.8 ) : texture2D( map, vMapUv, -0.8 ) )",
+);
 // Draw at more than the screen's resolution and scale down: it steadies thin
 // lines, bevel glints and reflections.
 const SUPERSAMPLE = 1.5;
@@ -193,11 +203,23 @@ export interface BarographOptions {
   onDrumDrag?(hours: number): void;
   /** The drag on the drum ended. */
   onDrumRelease?(): void;
+  /** The paper selector was worked: the position asked for (0, 1 or 2). */
+  onSelect?(position: number): void;
 }
 
 export interface Barograph {
-  /** Pose the pen, the movement behind it and the dial needle for a sea-level pressure in inHg. */
-  setPressure(inHg: number): void;
+  /** Pose the pen, and the movement behind it, at a height up the chart's grid: 0 at the bottom, 1 at the top. */
+  setPen(fraction: number): void;
+  /** Point the dial's needle at a sea-level pressure in inHg. */
+  setNeedle(inHg: number): void;
+  /** The colour of the ink in the pen (a CSS colour). */
+  setInk(colour: string): void;
+  /** A second sheet to wrap onto the drum over the chart (see setWrap), or null to take it away. */
+  setIncoming(sheet: THREE.Texture | null): void;
+  /** How much of the paper's length, from the clip on, shows the incoming sheet: 0 to 1. */
+  setWrap(split: number): void;
+  /** Swing the paper selector's lever to a position (0, 1 or 2). */
+  setSelector(position: number): void;
   /** Set the dial thermometer's spirit column, in degrees Fahrenheit. */
   setTemperature(degF: number): void;
   /** Turn the drum so this hour of the week (0 = Monday 00:00) is under the pen. Hours outside the week turn it on. */
@@ -301,8 +323,11 @@ export async function createBarograph(canvas: HTMLCanvasElement, options: Barogr
   };
   showTemperature(ROOM_F);
 
-  /** A surface whose diffuse light comes from the bake. */
-  const baked = <T extends THREE.MeshStandardMaterial>(material: T, print = false): T => {
+  // The sheet wrapping onto the drum during a change of paper, and how far it has got.
+  const wrap = { nextMap: { value: chart as THREE.Texture }, wrapSplit: { value: 0 } };
+
+  /** A surface whose diffuse light comes from the bake. `look` says how its texture is read. */
+  const baked = <T extends THREE.MeshStandardMaterial>(material: T, look: "plain" | "print" | "paper" = "plain"): T => {
     material.lightMap = light;
     material.lightMapIntensity = Math.PI * LIGHT_SCALE;
     material.aoMap = occlusion;
@@ -310,9 +335,22 @@ export async function createBarograph(canvas: HTMLCanvasElement, options: Barogr
       shader.fragmentShader = shader.fragmentShader
         .replace("#include <lights_fragment_maps>", LIGHTS_WITHOUT_STUDIO_DIFFUSE)
         .replace("#include <aomap_fragment>", OCCLUDE_REFLECTIONS_ONLY);
-      if (print) shader.fragmentShader = shader.fragmentShader.replace("#include <map_fragment>", SHARP_PRINT);
+      if (look === "print") shader.fragmentShader = shader.fragmentShader.replace("#include <map_fragment>", SHARP_PRINT);
+      if (look === "paper") {
+        Object.assign(shader.uniforms, wrap);
+        // U runs once round the drum from the clip, before the chart is scrolled.
+        shader.vertexShader = shader.vertexShader
+          .replace("#include <common>", "#include <common>\nvarying float vPaperU;")
+          .replace("#include <uv_vertex>", "#include <uv_vertex>\n\tvPaperU = uv.x;");
+        shader.fragmentShader = shader.fragmentShader
+          .replace(
+            "#include <common>",
+            "#include <common>\nuniform sampler2D nextMap;\nuniform float wrapSplit;\nvarying float vPaperU;",
+          )
+          .replace("#include <map_fragment>", PAPER_PRINT);
+      }
     };
-    material.customProgramCacheKey = () => (print ? "baked-print" : "baked-diffuse");
+    material.customProgramCacheKey = () => `baked-${look}`;
     return material;
   };
   // Metal in a crevice mirrors its bright neighbours, so occlusion dims it only a little.
@@ -332,8 +370,8 @@ export async function createBarograph(canvas: HTMLCanvasElement, options: Barogr
   const materials: Record<string, THREE.Material> = {
     Wood: baked(new THREE.MeshPhysicalMaterial({ ...woodLook, color: new THREE.Color(1.25, 1.25, 1.25) })),
     WoodDark: baked(new THREE.MeshPhysicalMaterial({ ...woodLook, color: new THREE.Color(0.25, 0.25, 0.25) })),
-    ChartPaper: baked(new THREE.MeshStandardMaterial({ map: chart, roughness: 0.82 }), true),
-    DialFace: baked(new THREE.MeshPhysicalMaterial({ map: dial, roughness: 0.55, specularIntensity: 0.6 }), true),
+    ChartPaper: baked(new THREE.MeshStandardMaterial({ map: chart, roughness: 0.82 }), "paper"),
+    DialFace: baked(new THREE.MeshPhysicalMaterial({ map: dial, roughness: 0.55, specularIntensity: 0.6 }), "print"),
     Ink: baked(new THREE.MeshStandardMaterial({ color: linear(0.03, 0.025, 0.2), roughness: 0.3 })),
     Engraving: baked(new THREE.MeshStandardMaterial({ color: linear(0.015, 0.012, 0.01), roughness: 0.7 })),
     Ebonite: baked(new THREE.MeshStandardMaterial({ color: linear(0.012, 0.012, 0.014), roughness: 0.25 })),
@@ -424,8 +462,9 @@ export async function createBarograph(canvas: HTMLCanvasElement, options: Barogr
   controls.maxDistance = 2.6;
   controls.minPolarAngle = THREE.MathUtils.degToRad(10); // nearly overhead, to look down through the top glass
   controls.maxPolarAngle = THREE.MathUtils.degToRad(88);
-  controls.minAzimuthAngle = THREE.MathUtils.degToRad(-70);
-  controls.maxAzimuthAngle = THREE.MathUtils.degToRad(70);
+  // Far enough round each side to face the ends: the paper selector is read from the right.
+  controls.minAzimuthAngle = THREE.MathUtils.degToRad(-120);
+  controls.maxAzimuthAngle = THREE.MathUtils.degToRad(120);
 
   // The pen arbor swings with the pressure and takes the movement with it. The
   // pen arm, inside it, is pushed off the paper by the lifter's rod.
@@ -435,7 +474,10 @@ export async function createBarograph(canvas: HTMLCanvasElement, options: Barogr
   const needle = model.getObjectByName("Needle");
   const drum = model.getObjectByName("Drum");
   const clip = model.getObjectByName("ChartClip");
+  const lever = model.getObjectByName("PaperLever");
   const poseMovement = makeMovement(model);
+  let selected = 0;
+  let leverTurn = SELECTOR_RAD[0];
   let penSwing = 0;
   let lift = 0;
   let liftTarget = 0;
@@ -459,15 +501,27 @@ export async function createBarograph(canvas: HTMLCanvasElement, options: Barogr
   // it from the orbit controls when it lands on the drum.
   const ray = new THREE.Raycaster();
   const pointer = new THREE.Vector2();
-  const onDrum = (event: PointerEvent): boolean => {
-    if (!drum) return false;
+  const pivot = new THREE.Vector3();
+  /** What is under the pointer: the drum, a position on the paper selector, or nothing that answers. */
+  const partAt = (event: PointerEvent): "drum" | { select: number } | null => {
     const box = canvas.getBoundingClientRect();
     pointer.set(((event.clientX - box.left) / box.width) * 2 - 1, -((event.clientY - box.top) / box.height) * 2 + 1);
     ray.setFromCamera(pointer, camera);
     const hit = ray.intersectObject(model, true).find((h) => (h.object as THREE.Mesh).material !== materials.Glass);
-    let node: THREE.Object3D | null = hit?.object ?? null;
-    while (node && node !== drum) node = node.parent;
-    return node === drum;
+    for (let node: THREE.Object3D | null = hit?.object ?? null; node; node = node.parent) {
+      if (node === drum) return "drum";
+      // The lever itself steps on to the next paper.
+      if (node === lever) return { select: (selected + 1) % SELECTOR_RAD.length };
+      if (lever && node.name.startsWith("Quadrant")) {
+        // A place on the quadrant asks for the position nearest it. Seen from
+        // above, the lever at no turn points along -X from its pivot.
+        lever.getWorldPosition(pivot);
+        const turn = Math.atan2(hit!.point.z - pivot.z, pivot.x - hit!.point.x);
+        const gaps = SELECTOR_RAD.map((at) => Math.abs(at - turn));
+        return { select: gaps.indexOf(Math.min(...gaps)) };
+      }
+    }
+    return null;
   };
   /** Screen pixels per hour of paper at the front of the drum. */
   const pixelsPerHour = (): number => {
@@ -482,8 +536,16 @@ export async function createBarograph(canvas: HTMLCanvasElement, options: Barogr
   };
   let dragX: number | null = null;
   let perHour = 1;
+  let pressed: { select: number; x: number; y: number } | null = null;
   const press = (event: PointerEvent) => {
-    if (event.button !== 0 || !onDrum(event)) return;
+    if (event.button !== 0) return;
+    const part = partAt(event);
+    if (!part) return;
+    if (part !== "drum") {
+      // A click on the selector works it; a drag that starts there still looks around.
+      pressed = { select: part.select, x: event.clientX, y: event.clientY };
+      return;
+    }
     event.stopPropagation();
     dragX = event.clientX;
     perHour = pixelsPerHour();
@@ -492,7 +554,10 @@ export async function createBarograph(canvas: HTMLCanvasElement, options: Barogr
   };
   const move = (event: PointerEvent) => {
     if (dragX === null) {
-      if (event.buttons === 0) canvas.style.cursor = onDrum(event) ? "ew-resize" : "";
+      if (event.buttons === 0) {
+        const part = partAt(event);
+        canvas.style.cursor = part === "drum" ? "ew-resize" : part ? "pointer" : "";
+      }
       return;
     }
     // Dragging the paper to the right brings earlier hours to the pen.
@@ -501,6 +566,10 @@ export async function createBarograph(canvas: HTMLCanvasElement, options: Barogr
     if (hours !== 0) options.onDrumDrag?.(hours);
   };
   const release = (event: PointerEvent) => {
+    if (pressed) {
+      if (Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) < 5) options.onSelect?.(pressed.select);
+      pressed = null;
+    }
     if (dragX === null) return;
     dragX = null;
     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
@@ -536,6 +605,12 @@ export async function createBarograph(canvas: HTMLCanvasElement, options: Barogr
       poseArm();
       dirty = true;
     }
+    const leverGap = SELECTOR_RAD[selected] - leverTurn;
+    if (leverGap !== 0 && lever) {
+      leverTurn = Math.abs(leverGap) <= SELECTOR_STEP_RAD ? SELECTOR_RAD[selected] : leverTurn + Math.sign(leverGap) * SELECTOR_STEP_RAD;
+      lever.rotation.y = leverTurn;
+      dirty = true;
+    }
     if (!dirty) return;
     dirty = false;
     draw();
@@ -566,14 +641,33 @@ export async function createBarograph(canvas: HTMLCanvasElement, options: Barogr
   }
 
   return {
-    setPressure(inHg: number) {
+    setPen(fraction: number) {
       // The pen stops at the edges of the chart, as on the real instrument.
-      const onChart = THREE.MathUtils.clamp(inHg, SCALE.lo, SCALE.hi);
-      const rise = ((onChart - (SCALE.lo + SCALE.hi) / 2) / (SCALE.hi - SCALE.lo)) * CHART_GRID_M;
+      const rise = (THREE.MathUtils.clamp(fraction, 0, 1) - 0.5) * CHART_GRID_M;
       penSwing = Math.asin(rise / PEN_ARM_M);
       poseArm();
-      // The dial keeps its full 28 to 31 inHg scale.
+      invalidate();
+    },
+    setNeedle(inHg: number) {
+      // The dial has its own scale, 28 to 31 inHg, with 29.5 straight up.
       needle?.quaternion.setFromAxisAngle(UP, -(inHg - 29.5) * DIAL_RAD_PER_INHG);
+      invalidate();
+    },
+    setInk(colour: string) {
+      (materials.Ink as THREE.MeshStandardMaterial).color.set(colour);
+      invalidate();
+    },
+    setIncoming(sheet: THREE.Texture | null) {
+      wrap.nextMap.value = sheet ?? chart;
+      if (!sheet) wrap.wrapSplit.value = 0;
+      invalidate();
+    },
+    setWrap(split: number) {
+      wrap.wrapSplit.value = split;
+      invalidate();
+    },
+    setSelector(position: number) {
+      selected = THREE.MathUtils.clamp(Math.round(position), 0, SELECTOR_RAD.length - 1);
       invalidate();
     },
     setTemperature(degF: number) {
