@@ -14,12 +14,16 @@ import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { Reflector } from "three/addons/objects/Reflector.js";
 import { createViewTransform } from "./tonemap";
+import { SCALE, WEEK_HOURS } from "./chart";
 
 const ASSETS = `${import.meta.env.BASE_URL}barograph/`;
 
 // Shared with build_barograph.py (millimetres there, metres here).
 const PEN_ARM_M = 0.173;
-const CHART_GRID_M = 0.09; // 28.0 to 31.0 inHg
+const CHART_GRID_M = 0.09; // SCALE.lo to SCALE.hi on the chart
+const CHART_AT_PEN_HOURS = 82; // the hour of the week under the pen in the model as built
+const PEN_LIFT_RAD = THREE.MathUtils.degToRad(4); // how far the lifter swings the pen off the paper
+const PAPER_RADIUS_M = 0.0466;
 const DIAL_RAD_PER_INHG = THREE.MathUtils.degToRad(66);
 const LIGHT_SCALE = 2.5; // light.png stores light / LIGHT_SCALE
 const TARGET = new THREE.Vector3(0, 0.118, 0);
@@ -114,9 +118,24 @@ const SHARP_PRINT = THREE.ShaderChunk.map_fragment.replace(
 // lines, bevel glints and reflections.
 const SUPERSAMPLE = 1.5;
 
+export interface BarographOptions {
+  /** The chart paper's texture, one week round the drum (chart.ts). */
+  chart: THREE.Texture;
+  /** The drum was dragged; positive hours turn it forward in time. */
+  onDrumDrag?(hours: number): void;
+  /** The drag on the drum ended. */
+  onDrumRelease?(): void;
+}
+
 export interface Barograph {
   /** Pose the pen and the dial needle for a sea-level pressure in inHg. */
   setPressure(inHg: number): void;
+  /** Turn the drum so this hour of the week (0 = Monday 00:00) is under the pen. */
+  setPenTime(hoursIntoWeek: number): void;
+  /** Lift the pen off the paper (true) or let it down (false). It swings there gently. */
+  setPenLifted(lifted: boolean): void;
+  /** Redraw: call after changing the chart texture. */
+  invalidate(): void;
   dispose(): void;
 }
 
@@ -140,7 +159,8 @@ async function loadTexture(
   return tex;
 }
 
-export async function createBarograph(canvas: HTMLCanvasElement): Promise<Barograph> {
+export async function createBarograph(canvas: HTMLCanvasElement, options: BarographOptions): Promise<Barograph> {
+  const chart = options.chart;
   // The scene is drawn in scene-linear light; `view` turns that into display colours.
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -151,14 +171,13 @@ export async function createBarograph(canvas: HTMLCanvasElement): Promise<Barogr
 
   const textures = new THREE.TextureLoader();
   const aniso = renderer.capabilities.getMaxAnisotropy();
-  const [gltf, env, lut, woodDiff, woodNormal, dial, chart, light, occlusion, cloth] = await Promise.all([
+  const [gltf, env, lut, woodDiff, woodNormal, dial, light, occlusion, cloth] = await Promise.all([
     new GLTFLoader().loadAsync(ASSETS + "barograph.glb"),
     new HDRLoader().loadAsync(ASSETS + "studio_env.hdr"),
     textures.loadAsync(ASSETS + "view_lut.png"),
     loadTexture(textures, "wood_diff.jpg", true, aniso),
     loadTexture(textures, "wood_normal.jpg", false, aniso),
     loadTexture(textures, "dial.png", true, aniso),
-    loadTexture(textures, "chart_placeholder.png", true, aniso),
     loadTexture(textures, "light.png", true, 1, 1),
     loadTexture(textures, "ao.png", false, 1, 1),
     loadTexture(textures, "table.png", true, aniso),
@@ -289,6 +308,17 @@ export async function createBarograph(canvas: HTMLCanvasElement): Promise<Barogr
 
   const penArm = model.getObjectByName("PenArm");
   const needle = model.getObjectByName("Needle");
+  const drum = model.getObjectByName("Drum");
+  let penSwing = 0;
+  let lift = 0;
+  let liftTarget = 0;
+  const swingQ = new THREE.Quaternion();
+  const liftQ = new THREE.Quaternion();
+  const poseArm = () => {
+    swingQ.setFromAxisAngle(ARM_AXIS, penSwing);
+    liftQ.setFromAxisAngle(UP, lift * PEN_LIFT_RAD);
+    penArm?.quaternion.multiplyQuaternions(liftQ, swingQ);
+  };
 
   let dirty = true;
   const invalidate = () => {
@@ -297,6 +327,63 @@ export async function createBarograph(canvas: HTMLCanvasElement): Promise<Barogr
   controls.addEventListener("change", invalidate);
 
   const holder = canvas.parentElement ?? canvas;
+
+  // Dragging the drum turns it; dragging anywhere else looks around. This
+  // listener sees the press first (capture, on the canvas's parent), and keeps
+  // it from the orbit controls when it lands on the drum.
+  const ray = new THREE.Raycaster();
+  const pointer = new THREE.Vector2();
+  const onDrum = (event: PointerEvent): boolean => {
+    if (!drum) return false;
+    const box = canvas.getBoundingClientRect();
+    pointer.set(((event.clientX - box.left) / box.width) * 2 - 1, -((event.clientY - box.top) / box.height) * 2 + 1);
+    ray.setFromCamera(pointer, camera);
+    const hit = ray.intersectObject(model, true).find((h) => (h.object as THREE.Mesh).material !== materials.Glass);
+    let node: THREE.Object3D | null = hit?.object ?? null;
+    while (node && node !== drum) node = node.parent;
+    return node === drum;
+  };
+  /** Screen pixels per hour of paper at the front of the drum. */
+  const pixelsPerHour = (): number => {
+    const centre = new THREE.Vector3();
+    drum!.getWorldPosition(centre);
+    centre.y = 0.17;
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion).multiplyScalar(PAPER_RADIUS_M);
+    const a = centre.clone().sub(right).project(camera);
+    const b = centre.clone().add(right).project(camera);
+    const diameterPx = (Math.abs(b.x - a.x) / 2) * canvas.getBoundingClientRect().width;
+    return Math.max(0.1, (diameterPx * Math.PI) / WEEK_HOURS);
+  };
+  let dragX: number | null = null;
+  let perHour = 1;
+  const press = (event: PointerEvent) => {
+    if (event.button !== 0 || !onDrum(event)) return;
+    event.stopPropagation();
+    dragX = event.clientX;
+    perHour = pixelsPerHour();
+    canvas.setPointerCapture(event.pointerId);
+    canvas.style.cursor = "ew-resize";
+  };
+  const move = (event: PointerEvent) => {
+    if (dragX === null) {
+      if (event.buttons === 0) canvas.style.cursor = onDrum(event) ? "ew-resize" : "";
+      return;
+    }
+    // Dragging the paper to the right brings earlier hours to the pen.
+    const hours = -(event.clientX - dragX) / perHour;
+    dragX = event.clientX;
+    if (hours !== 0) options.onDrumDrag?.(hours);
+  };
+  const release = (event: PointerEvent) => {
+    if (dragX === null) return;
+    dragX = null;
+    if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+    options.onDrumRelease?.();
+  };
+  holder.addEventListener("pointerdown", press, { capture: true });
+  canvas.addEventListener("pointermove", move);
+  canvas.addEventListener("pointerup", release);
+  canvas.addEventListener("pointercancel", release);
   const fit = () => {
     const w = Math.max(1, holder.clientWidth);
     const h = Math.max(1, holder.clientHeight);
@@ -317,6 +404,12 @@ export async function createBarograph(canvas: HTMLCanvasElement): Promise<Barogr
   const tick = () => {
     frame = requestAnimationFrame(tick);
     controls.update();
+    if (lift !== liftTarget) {
+      const step = 0.06;
+      lift = Math.abs(liftTarget - lift) <= step ? liftTarget : lift + Math.sign(liftTarget - lift) * step;
+      poseArm();
+      dirty = true;
+    }
     if (!dirty) return;
     dirty = false;
     draw();
@@ -348,22 +441,37 @@ export async function createBarograph(canvas: HTMLCanvasElement): Promise<Barogr
 
   return {
     setPressure(inHg: number) {
-      const rise = ((inHg - 29.5) / 3) * CHART_GRID_M;
-      const swing = Math.asin(THREE.MathUtils.clamp(rise / PEN_ARM_M, -0.3, 0.3));
-      penArm?.quaternion.setFromAxisAngle(ARM_AXIS, swing);
+      // The pen stops at the edges of the chart, as on the real instrument.
+      const onChart = THREE.MathUtils.clamp(inHg, SCALE.lo, SCALE.hi);
+      const rise = ((onChart - (SCALE.lo + SCALE.hi) / 2) / (SCALE.hi - SCALE.lo)) * CHART_GRID_M;
+      penSwing = Math.asin(rise / PEN_ARM_M);
+      poseArm();
+      // The dial keeps its full 28 to 31 inHg scale.
       needle?.quaternion.setFromAxisAngle(UP, -(inHg - 29.5) * DIAL_RAD_PER_INHG);
       invalidate();
     },
+    setPenTime(hoursIntoWeek: number) {
+      chart.offset.x = (hoursIntoWeek - CHART_AT_PEN_HOURS) / WEEK_HOURS;
+      invalidate();
+    },
+    setPenLifted(lifted: boolean) {
+      liftTarget = lifted ? 1 : 0;
+    },
+    invalidate,
     dispose() {
       cancelAnimationFrame(frame);
       observer.disconnect();
       controls.dispose();
+      holder.removeEventListener("pointerdown", press, { capture: true });
+      canvas.removeEventListener("pointermove", move);
+      canvas.removeEventListener("pointerup", release);
+      canvas.removeEventListener("pointercancel", release);
       scene.traverse((node) => {
         const mesh = node as THREE.Mesh;
         if (mesh.isMesh) mesh.geometry.dispose();
       });
       for (const m of Object.values(materials)) m.dispose();
-      for (const t of [env, lut, woodDiff, woodNormal, dial, chart, light, occlusion, cloth]) t.dispose();
+      for (const t of [env, lut, woodDiff, woodNormal, dial, light, occlusion, cloth]) t.dispose();
       view.dispose();
       surroundings.dispose();
       interior.dispose();
