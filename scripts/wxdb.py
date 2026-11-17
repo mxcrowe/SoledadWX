@@ -98,6 +98,9 @@ CREATE TABLE IF NOT EXISTS quality_periods (
     period_start INTEGER NOT NULL,      -- epoch seconds UTC, inclusive
     period_end   INTEGER NOT NULL,      -- epoch seconds UTC, exclusive
     reason       TEXT NOT NULL,
+    -- 1: charts let another source take over here (a neighbour's rain while
+    -- our gauge was blocked). 0: only the extremes set these readings aside.
+    charts_fallback INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (metric, source_kind, period_start)
 ) WITHOUT ROWID;
 
@@ -211,6 +214,9 @@ PRIORITY = [
     # from local internet outages (station can't reach the cloud). Only
     # surfaces where amb_rest/amb_ws are silent.
     ("2025-08-17", None,         "wu_ksandi354",  5),
+    # Borrowed for single events where our own sensor failed (the blocked rain
+    # gauge of 16 Nov 2026); its rows exist only for those days.
+    ("2025-08-17", None,         "wu_ksandi4366", 6),
 ]
 
 # Hygrometer failures, settled 2026-10-26 (see Dashboard/QC_SURVEY_2026-10-26.md
@@ -223,6 +229,7 @@ PRIORITY = [
 # equally unusable.
 _HUMIDITY_DERIVED = ("humidity", "dewpointf", "heatindexf", "humidexf",
                      "wetbulbf", "apparenttempf", "feelslikef")
+# (metric, source kind, start, end, reason[, charts_fallback]); times are UTC.
 QUALITY_PERIODS = [
     (metric, "cumulus_log", start, end, reason)
     for metric in _HUMIDITY_DERIVED
@@ -242,6 +249,14 @@ QUALITY_PERIODS = [
     # 1% through June fog season.
     (metric, "wu_ksandi84", "2014-05-01", "2014-07-01", "proxy hygrometer pinned at 100%/1%")
     for metric in _HUMIDITY_DERIVED
+] + [
+    # The rain gauge blocked through the 16 Nov 2026 storm (0.06 of about
+    # 0.78 in); KCASANDI4366 stands in for that local day, in charts too
+    # (the sixth field). scripts/fix_rain_2026_11_16.py. Times are UTC.
+    (metric, kind, "2026-11-16T08:00:00", "2026-11-17T08:00:00",
+     "rain gauge blocked during the 16 Nov 2026 storm (0.06 of about 0.78 in); KCASANDI4366 used for the day", 1)
+    for metric in ("dailyrainin", "hourlyrainin")
+    for kind in ("amb_rest", "amb_ws")
 ]
 
 
@@ -279,11 +294,14 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             (start, end, kind, rank),
         )
     to_epoch = lambda iso: int(datetime.fromisoformat(iso).replace(tzinfo=timezone.utc).timestamp())
-    for metric, kind, start_iso, end_iso, reason in QUALITY_PERIODS:
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(quality_periods)")]
+    if "charts_fallback" not in cols:
+        conn.execute("ALTER TABLE quality_periods ADD COLUMN charts_fallback INTEGER NOT NULL DEFAULT 0")
+    for metric, kind, start_iso, end_iso, reason, *fallback in QUALITY_PERIODS:
         conn.execute(
-            "INSERT OR REPLACE INTO quality_periods(metric, source_kind, period_start, period_end, reason) "
-            "VALUES (?,?,?,?,?)",
-            (metric, kind, to_epoch(start_iso), to_epoch(end_iso), reason),
+            "INSERT OR REPLACE INTO quality_periods(metric, source_kind, period_start, period_end, reason, charts_fallback) "
+            "VALUES (?,?,?,?,?,?)",
+            (metric, kind, to_epoch(start_iso), to_epoch(end_iso), reason, fallback[0] if fallback else 0),
         )
     conn.commit()
 

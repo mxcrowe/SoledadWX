@@ -654,6 +654,18 @@ against over-building the UI.)
 ### Skip — climate/region mismatch
 Saharan dust & AOD, European pollen, Mediterranean-wind rose, ASX200 ticker.
 
+## Rain gauge blockage, 16 Nov 2026 (corrected; one item left)
+
+The gauge caught 0.06 of about 0.78 in on 16 Nov, and Michael's test next morning added 0.13 in that never
+fell. `scripts/fix_rain_2026_11_16.py` set the test aside, marked our daily and hourly rain faulty for the
+16th, and borrowed KCASANDI4366's record for that day (charts and rollups use it). Still to do:
+
+- Done 17 Nov: Michael set the console's counters right at 13:34 (Calibration mode, rain offsets:
+  0.00 / 0.78 / 1.35 / 7.11), and the script's part 4 corrected the Archive's weekly, monthly and yearly
+  rows from the storm until then (undo from `data/corrections/rain_totals_2026_11_16_before.json`).
+- Later: a second, different rain sensor (optical, e.g. Hydreon RG-15) so a blocked funnel is noticed at
+  once. Part of the next station hardware spec.
+
 ## Barograph page (started 2026-11-09)
 
 Built so far: the instrument, the live chart with drag to look back, the working movement, the dial

@@ -73,12 +73,15 @@ CREATE TABLE IF NOT EXISTS backfill_attempts (
 
 -- Periods when a source's sensor is unusable for a metric. Rows are seeded by
 -- scripts/wxdb.py (QUALITY_PERIODS); the rollup QC skips readings inside them.
+-- With charts_fallback = 1, charts also let another source take over there
+-- (a neighbour's rain while our gauge was blocked); see BEST_IN_BUCKET.
 CREATE TABLE IF NOT EXISTS quality_periods (
     metric       TEXT NOT NULL,
     source_kind  TEXT NOT NULL,
     period_start INTEGER NOT NULL,
     period_end   INTEGER NOT NULL,
     reason       TEXT NOT NULL,
+    charts_fallback INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (metric, source_kind, period_start)
 ) WITHOUT ROWID;
 ";
@@ -280,6 +283,17 @@ impl Recorder {
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         conn.execute_batch(SCHEMA)?;
+        // Archives made before charts_fallback existed (2026-11-17).
+        let has_fallback: bool = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('quality_periods') WHERE name = 'charts_fallback'",
+            [],
+            |r| r.get::<_, i64>(0),
+        )? > 0;
+        if !has_fallback {
+            conn.execute_batch(
+                "ALTER TABLE quality_periods ADD COLUMN charts_fallback INTEGER NOT NULL DEFAULT 0",
+            )?;
+        }
         conn.execute(
             "INSERT OR IGNORE INTO sources(kind, name, station, path_or_url, sample_rate, notes)
              VALUES ('amb_ws', 'AmbientWeather live WebSocket', 'WS-1002-WiFi',
@@ -950,8 +964,19 @@ pub fn series_hours(metric: &str, hours: i64) -> Result<Vec<SeriesPoint>, String
 /// wherever two instruments disagree, and false rain when two daily totals
 /// interleave. Sources with no priority row (the inert WU import) never
 /// appear. At a 1-second bucket this is exactly the canonical stream.
+// A reading inside a quality period marked charts_fallback ranks below every
+// clean one, so another source takes over the bucket where it has data; where
+// none does, the flagged reading still shows rather than leaving a hole.
+// Buckets are cut on UTC boundaries, so a bucket wider than the period (a
+// whole day around a local-day period) can still pick the flagged source;
+// the Charts page asks for an hour at most, and periods start on the hour.
 const BEST_IN_BUCKET: &str = "
-    r AS (SELECT (o.ts_utc / ?3) * ?3 AS b, o.ts_utc, o.value, p.rank
+    r AS (SELECT (o.ts_utc / ?3) * ?3 AS b, o.ts_utc, o.value,
+                 p.rank + CASE WHEN EXISTS (
+                     SELECT 1 FROM quality_periods qp
+                     WHERE qp.charts_fallback = 1 AND qp.metric = ?1 AND qp.source_kind = s.kind
+                       AND o.ts_utc >= qp.period_start AND o.ts_utc < qp.period_end)
+                   THEN 1000 ELSE 0 END AS rank
           FROM observations o
           JOIN sources s ON s.id = o.source_id
           JOIN source_priority p ON p.source_kind = s.kind
